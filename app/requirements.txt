@@ -1,0 +1,7 @@
+beautifulsoup4
+lxml
+playwright
+PyMuPDF
+python-docx
+reportlab
+requests

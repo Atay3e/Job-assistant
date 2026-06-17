@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>求职助手</title>
+    <link rel="stylesheet" href="/styles.css?v=20260617-multi-region" />
+  </head>
+  <body>
+    <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+
+    <div class="app-shell">
+      <aside class="rail">
+        <div class="brand">
+          <div class="brand-mark">JA</div>
+          <div>
+            <div class="brand-title">求职助手</div>
+            <div class="brand-subtitle">多地区求职工作台</div>
+          </div>
+        </div>
+        <nav class="nav-list" aria-label="主视图">
+          <button class="nav-item active" data-view="today">今日工作台</button>
+          <button class="nav-item" data-view="fit">职业定位</button>
+          <button class="nav-item" data-view="queue">投递队列</button>
+          <button class="nav-item" data-view="tracker">总追踪表</button>
+        </nav>
+        <nav class="nav-secondary" aria-label="次级视图">
+          <button class="nav-item" data-view="companies">公司关注</button>
+          <button class="nav-item" data-view="notion">Notion</button>
+          <button class="nav-item" data-view="profile">资料</button>
+        </nav>
+        <div class="rail-note">
+          <span class="status-dot"></span>
+          最终提交前必须由你确认
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">每日求职工作台</p>
+            <h1>今天的求职操作台</h1>
+            <p class="topbar-subtitle">自动扫描、定位推荐、人工确认投递，所有岗位 URL 会保留在本地追踪表。</p>
+          </div>
+          <div class="region-toolbar" aria-label="Active job market">
+            <label>
+              <span>地区</span>
+              <select id="regionSelect"></select>
+            </label>
+            <div id="contextMini" class="context-mini">选择地区 · 配置身份</div>
+          </div>
+        </header>
+
+        <section class="metrics" aria-label="每日指标">
+          <div class="metric">
+            <span>今日推荐目标</span>
+            <strong id="recommendedMetric">0</strong>
+          </div>
+          <div class="metric">
+            <span>投递队列</span>
+            <strong id="queueMetric">0</strong>
+          </div>
+          <div class="metric">
+            <span>今日已投</span>
+            <strong id="appliedMetric">0</strong>
+          </div>
+          <div class="metric">
+            <span>已记录 URL</span>
+            <strong id="totalMetric">0</strong>
+          </div>
+        </section>
+
+        <section class="view active" id="todayView">
+          <div class="workbench-layout">
+            <div class="primary-flow">
+              <section class="panel career-snapshot">
+                <div>
+                  <p class="section-kicker">职业定位</p>
+                  <h2>让今日推荐跟着你的方向走</h2>
+                  <p id="careerSnapshotText" class="small-text">上传或分析简历后，这里会显示适合投递的岗位方向。</p>
+                </div>
+                <div id="careerSnapshotChips" class="chip-row"></div>
+              </section>
+
+              <div class="section-head recommendation-switch-head">
+                <div>
+                  <p class="section-kicker">今日推荐</p>
+                  <h2>按匹配逻辑查看岗位</h2>
+                  <p id="recommendationContext" class="small-text">职业定位会影响排序，但不会覆盖 5.0 评分和身份限制规则。</p>
+                </div>
+                <div class="recommendation-tabs" role="group" aria-label="推荐岗位类别">
+                  <button class="recommendation-tab active" data-recommendation-view="fit">
+                    <span>定位推荐</span>
+                    <strong id="fitJobCount">0/20</strong>
+                  </button>
+                  <button class="recommendation-tab" data-recommendation-view="ai">
+                    <span>AI 相关</span>
+                    <strong id="aiJobCount">0/20</strong>
+                  </button>
+                  <button class="recommendation-tab" data-recommendation-view="general">
+                    <span>综合推荐</span>
+                    <strong id="generalJobCount">0/20</strong>
+                  </button>
+                </div>
+              </div>
+              <div id="fitJobList" class="job-list"></div>
+              <div id="aiJobList" class="job-list ai-job-list" hidden></div>
+              <div id="jobList" class="job-list" hidden></div>
+
+              <details class="panel import-panel">
+                <summary>
+                  <span>
+                    <span class="section-kicker">备用导入</span>
+                    <strong>手动补充岗位 URL 和 JD</strong>
+                  </span>
+                  <span class="small-text">扫描抓不到时再用</span>
+                </summary>
+                <form id="jobForm" class="job-form">
+                  <label>
+                    <span>公司</span>
+                    <input name="company" autocomplete="organization" placeholder="Shopee" required />
+                  </label>
+                  <label>
+                    <span>岗位</span>
+                    <input name="position" placeholder="Product Design Intern" required />
+                  </label>
+                  <label>
+                    <span>来源</span>
+                    <select name="source">
+                      <option>LinkedIn</option>
+                      <option>Indeed</option>
+                      <option>InternSG</option>
+                      <option>JobStreet</option>
+                      <option>Company Site</option>
+                      <option>Manual</option>
+                    </select>
+                  </label>
+                  <label class="wide">
+                    <span>岗位 URL</span>
+                    <input name="url" type="url" placeholder="https://..." required />
+                  </label>
+                  <label class="wide">
+                    <span>JD</span>
+                    <textarea name="jd_text" rows="5" placeholder="把岗位描述粘贴在这里"></textarea>
+                  </label>
+                  <div class="form-actions">
+                    <span id="formStatus" class="form-status"></span>
+                    <button class="primary-button" type="submit">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                      评分并保存
+                    </button>
+                  </div>
+                </form>
+              </details>
+            </div>
+
+            <aside class="ops-panel" aria-label="今日运行状态">
+              <section class="ops-card scan-ops">
+                <div class="ops-card-head">
+                  <div>
+                    <p class="section-kicker">自动扫描</p>
+                    <h2>来源进度</h2>
+                  </div>
+                  <span id="scanStatusPill" class="status-pill">待命</span>
+                </div>
+                <button class="primary-button scan-button" id="scanBtn">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13a8 8 0 0 1 14-5"/><path d="M18 3v5h-5"/><path d="M20 11a8 8 0 0 1-14 5"/><path d="M6 21v-5h5"/></svg>
+                  开始自动扫描
+                </button>
+                <div id="scanStatus" class="scan-status" aria-live="polite">尚未扫描。点击后会自动抓取、去重、评分并写入本地 tracker。</div>
+                <div id="scanProgress" class="source-progress"></div>
+                <div class="ops-meta">
+                  <span id="lastSuccessText">上次成功：-</span>
+                  <span id="failureText">失败/受限：0</span>
+                </div>
+              </section>
+
+              <section class="ops-card">
+                <div class="ops-card-head">
+                  <div>
+                    <p class="section-kicker">投递队列</p>
+                    <h2>今天下一步</h2>
+                  </div>
+                  <span id="queueMiniCount" class="status-pill">0</span>
+                </div>
+                <div id="queueMiniList" class="mini-list"></div>
+              </section>
+
+              <section class="ops-card report-ops">
+                <div class="ops-card-head">
+                  <div>
+                    <p class="section-kicker">日报</p>
+                    <h2>保存今日进展</h2>
+                  </div>
+                </div>
+                <button class="secondary-button report-button" id="reportBtn">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M9 13h6M9 17h6M9 9h2"/></svg>
+                  生成日报
+                </button>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="fitView">
+          <div class="fit-layout">
+            <section class="panel resume-upload-panel">
+              <div>
+                <p class="section-kicker">简历分析</p>
+                <h2>上传简历，生成投递方向</h2>
+                <p class="small-text">默认只在本机解析 PDF/DOCX/MD；AI 深度分析需要你主动点击，并且必须配置 API key。</p>
+              </div>
+              <form id="resumeUploadForm" class="resume-upload-form">
+                <label class="file-drop">
+                  <span>选择简历文件</span>
+                  <input id="resumeInput" name="resume" type="file" accept=".pdf,.docx,.md,.txt" />
+                </label>
+                <div class="form-actions">
+                  <span id="resumeStatus" class="form-status"></span>
+                  <button class="primary-button" id="resumeUploadBtn" type="submit">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M20 16v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>
+                    上传并本地分析
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section class="panel fit-board">
+              <div class="section-head inline-head">
+                <div>
+                  <p class="section-kicker">定位结果</p>
+                  <h2>适合投递的岗位类型</h2>
+                </div>
+                <div class="topbar-actions">
+                  <button class="secondary-button" id="localAnalyzeBtn">本地分析</button>
+                  <button class="secondary-button" id="aiAnalyzeBtn" title="仅在配置 OPENAI_API_KEY 后可用">AI 深度分析</button>
+                </div>
+              </div>
+              <div id="activeResume" class="resume-current"></div>
+              <p id="careerFitSummary" class="fit-summary">还没有分析结果。</p>
+              <div>
+                <p class="section-kicker">选择你感兴趣的方向</p>
+                <div id="directionChips" class="chip-row"></div>
+              </div>
+              <div class="fit-grid">
+                <div>
+                  <h3>能力证据</h3>
+                  <div id="strengthList" class="insight-list"></div>
+                </div>
+                <div>
+                  <h3>需要补强</h3>
+                  <div id="gapList" class="insight-list"></div>
+                </div>
+              </div>
+              <div>
+                <h3>简历证据片段</h3>
+                <div id="evidenceList" class="insight-list evidence-list"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="queueView">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">投递队列</p>
+              <h2>每日 15 个确认投递目标</h2>
+            </div>
+          </div>
+          <div id="queueList" class="job-list compact"></div>
+        </section>
+
+        <section class="view" id="trackerView">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">总追踪表</p>
+              <h2>所有岗位 URL 永久记录</h2>
+            </div>
+          </div>
+          <div class="panel tracker-toolbar" aria-label="时间线筛选">
+            <div>
+              <p class="section-kicker">时间线</p>
+              <h2>按日期查看岗位记录</h2>
+            </div>
+            <div class="tracker-controls">
+              <div class="segment" aria-label="筛选粒度">
+                <button class="segment-button tracker-mode-button active" data-tracker-mode="all">全部</button>
+                <button class="segment-button tracker-mode-button" data-tracker-mode="day">按日</button>
+                <button class="segment-button tracker-mode-button" data-tracker-mode="month">按月</button>
+              </div>
+              <label class="compact-label" id="trackerDateLabel">
+                <span>具体日期</span>
+                <input id="trackerDateInput" type="date" />
+              </label>
+              <label class="compact-label" id="trackerMonthLabel">
+                <span>月份</span>
+                <input id="trackerMonthInput" type="month" />
+              </label>
+            </div>
+            <div class="tracker-count" id="trackerCount">显示全部岗位</div>
+          </div>
+          <div class="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>状态</th>
+                  <th>评分</th>
+                  <th>时间线日期</th>
+                  <th>发现日期</th>
+                  <th>推荐日期</th>
+                  <th>投递日期</th>
+                  <th>URL</th>
+                </tr>
+              </thead>
+              <tbody id="trackerRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="companiesView">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">公司关注</p>
+              <h2>重点新加坡雇主</h2>
+            </div>
+          </div>
+          <section class="panel company-radar">
+            <form id="companyAddForm" class="company-add-form">
+              <label>
+                <span>公司</span>
+                <input name="company" placeholder="ByteDance" required />
+              </label>
+              <label class="wide">
+                <span>官网招聘链接</span>
+                <input name="url" type="url" placeholder="https://.../careers" required />
+              </label>
+              <label class="wide">
+                <span>关注方向</span>
+                <input name="focus" placeholder="AI product, UX, operations" />
+              </label>
+              <button class="primary-button" type="submit">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                添加关注
+              </button>
+            </form>
+          </section>
+          <div class="radar-columns">
+            <section>
+              <div class="section-head compact-head">
+                <div>
+                  <p class="section-kicker">已关注</p>
+                  <h2>会进入官网浅扫描</h2>
+                </div>
+              </div>
+              <div id="companyList" class="company-grid"></div>
+            </section>
+            <section>
+              <div class="section-head compact-head">
+                <div>
+                  <p class="section-kicker">推荐关注</p>
+                  <h2>按当前地区给出重点雇主</h2>
+                </div>
+              </div>
+              <div id="companyCatalog" class="company-grid"></div>
+            </section>
+          </div>
+          <div class="section-head company-jobs-head">
+            <div>
+              <p class="section-kicker">公司岗位</p>
+              <h2 id="companyJobsTitle">选择一家公司查看岗位</h2>
+            </div>
+          </div>
+          <div id="companyJobs" class="job-list"></div>
+        </section>
+
+        <section class="view" id="notionView">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">Notion 投递表</p>
+              <h2>只同步已加入投递的岗位</h2>
+            </div>
+            <button class="primary-button" id="notionSyncBtn">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10a4 4 0 0 1 0 8H6"/><path d="M8 11l-4-4 4-4"/><path d="M20 17H10a4 4 0 0 1 0-8h8"/><path d="M16 13l4 4-4 4"/></svg>
+              同步投递岗位
+            </button>
+          </div>
+          <p id="notionStatus" class="form-status"></p>
+          <div class="panel notion-guide">
+            <div>
+              <p class="section-kicker">投递状态</p>
+              <h2>Notion 只记录申请流程</h2>
+            </div>
+            <ol>
+              <li>本地小应用继续保留全量岗位，用来推荐、去重和筛选。</li>
+              <li>Notion 只同步你点过“加入投递”的岗位，并记录申请状态。</li>
+              <li>时间字段继续保留，用来按加入投递日期或投递日期查找。</li>
+            </ol>
+            <div id="notionConfigStatus" class="config-status"></div>
+          </div>
+          <div id="notionSchema" class="schema-grid"></div>
+        </section>
+
+        <section class="view" id="profileView">
+          <div class="section-head">
+            <div>
+              <p class="section-kicker">本地资料</p>
+              <h2>辅助填表使用的默认信息</h2>
+            </div>
+          </div>
+          <form id="contextForm" class="panel context-form">
+            <div class="context-step">
+              <p class="section-kicker">Step 1</p>
+              <h3>地区与身份</h3>
+              <label><span>目标地区</span><select name="active_region" id="contextRegion"></select></label>
+              <label><span>城市</span><select name="city" id="contextCity"></select></label>
+              <label class="wide"><span>身份/签证状态</span><input name="work_authorisation" placeholder="Work eligibility / visa status to confirm" /></label>
+            </div>
+            <div class="context-step">
+              <p class="section-kicker">Step 2</p>
+              <h3>目标方向</h3>
+              <label class="wide"><span>岗位方向</span><input name="target_directions" placeholder="ai-product, ux-product-design, user-research" /></label>
+              <label class="wide"><span>工作类型</span><input name="job_types" placeholder="Internship, Graduate, Full-time" /></label>
+            </div>
+            <div class="context-step">
+              <p class="section-kicker">Step 3</p>
+              <h3>公司雷达</h3>
+              <p class="small-text">保存画像后，首页推荐、扫描来源和公司目录会跟随当前地区切换。</p>
+              <div class="form-actions">
+                <span id="contextStatus" class="form-status"></span>
+                <button class="primary-button" type="submit">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+                  保存求职画像
+                </button>
+              </div>
+            </div>
+          </form>
+          <form id="profileForm" class="panel profile-form">
+            <label><span>姓名</span><input name="full_name" autocomplete="name" /></label>
+            <label><span>First name</span><input name="first_name" autocomplete="given-name" /></label>
+            <label><span>Last name</span><input name="last_name" autocomplete="family-name" /></label>
+            <label><span>Email</span><input name="email" type="email" autocomplete="email" /></label>
+            <label><span>Phone</span><input name="phone" autocomplete="tel" /></label>
+            <label><span>Location</span><input name="location" autocomplete="address-level2" /></label>
+            <label class="wide"><span>School</span><input name="school" /></label>
+            <label class="wide"><span>Degree</span><input name="degree" /></label>
+            <label><span>Visa status</span><input name="visa_status" /></label>
+            <label class="wide"><span>Work authorisation answer</span><textarea name="work_authorisation" rows="3"></textarea></label>
+            <label><span>LinkedIn</span><input name="linkedin" type="url" /></label>
+            <label><span>Portfolio</span><input name="portfolio" type="url" /></label>
+            <label class="wide"><span>Default resume path</span><input name="resume_path" /></label>
+            <label class="wide"><span>Default cover letter path</span><input name="cover_letter_path" /></label>
+            <label class="wide"><span>Availability answer</span><textarea name="availability" rows="3"></textarea></label>
+            <div class="form-actions">
+              <span id="profileStatus" class="form-status"></span>
+              <button class="primary-button" type="submit">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                保存资料
+              </button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="detailDialog">
+      <div class="dialog-head">
+        <div>
+          <p class="section-kicker">岗位详情</p>
+          <h2 id="detailTitle"></h2>
+        </div>
+        <button class="icon-button" id="closeDialog" aria-label="关闭详情">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div id="detailBody" class="detail-body"></div>
+    </dialog>
+
+    <script src="/app.js?v=20260617-multi-region"></script>
+  </body>
+</html>

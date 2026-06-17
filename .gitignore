@@ -1,0 +1,25 @@
+# Local secrets and runtime data
+.env
+.env.*
+!.env.example
+app/.env
+app/.env.*
+!app/.env.example
+
+# Local job-search data
+app/data/
+app/workspace/
+app/logs/
+app/server.err.log
+app/server.out.log
+
+# Python / test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
