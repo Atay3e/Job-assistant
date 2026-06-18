@@ -1,38 +1,28 @@
-# 求职助手
+# 求职助手 App
 
-一个本地优先的个人求职工作台，用来扫描岗位、分析简历定位、推荐适合岗位、管理公司关注、生成申请材料，并保留人工确认边界。
+这是求职助手的本地应用服务，包含网页界面、SQLite 数据库、扫描器、简历定位和投递辅助 API。
 
-## 功能
-
-- 多地区画像：Singapore、China Mainland、Hong Kong。
-- 本地 SQLite 岗位追踪。
-- 每日扫描、来源状态和失败记录。
-- 今日推荐：保留 5.0 基础评分，叠加地区、城市、方向和关注公司排序。
-- 职业定位：上传 PDF/DOCX/MD/TXT 简历并本地分析。
-- 公司雷达：关注默认公司目录或添加自定义官网招聘链接。
-- Apply / Watch / Drop 决策流。
-- 辅助填表：打开浏览器并停在最终提交前。
-- 本地日报和 Notion 同步入口。
-
-## 运行
+## 本地运行
 
 ```powershell
 python -m pip install -r requirements.txt
 python -m playwright install chromium
-python .\server.py
+.\Start-Job-Assistant.ps1 -Open
 ```
 
-然后打开：
+打开：
 
 ```text
 http://127.0.0.1:8787
 ```
 
-也可以使用：
+如果页面打不开，优先重新运行：
 
 ```powershell
 .\Start-Job-Assistant.ps1 -Open
 ```
+
+启动脚本会检查 `/api/health`，并在旧服务卡住时重启自己的后端进程。
 
 ## 配置
 
@@ -41,7 +31,21 @@ http://127.0.0.1:8787
 ```text
 JOB_ASSISTANT_HOST=127.0.0.1
 JOB_ASSISTANT_PORT=8787
+JOB_ASSISTANT_DATA_DIR=
+JOB_ASSISTANT_WORKSPACE_DIR=
 JOB_ASSISTANT_RESUME=
+```
+
+云平台通常会自动提供 `PORT`，服务会优先使用它。
+
+## 公开部署
+
+不要把 `127.0.0.1` 发给别人。它只代表访问者自己的电脑。
+
+公开部署请看根目录的 `docs/deployment.md`。推荐使用 Render 的 Blueprint 部署：
+
+```text
+https://render.com/deploy?repo=https://github.com/Atay3e/Job-assistant
 ```
 
 ## 本地数据

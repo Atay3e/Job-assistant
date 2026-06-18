@@ -18,14 +18,33 @@
 cd app
 python -m pip install -r requirements.txt
 python -m playwright install chromium
-python .\server.py
+.\Start-Job-Assistant.ps1 -Open
 ```
 
-Open:
+Local development URL:
 
 ```text
 http://127.0.0.1:8787
 ```
+
+`127.0.0.1` only works on your own computer. It is not a public link.
+
+## Public Deployment
+
+For a stable URL that other people can open, deploy the repository to Render:
+
+```text
+https://render.com/deploy?repo=https://github.com/Atay3e/Job-assistant
+```
+
+The repo includes:
+
+- `Dockerfile`
+- `render.yaml`
+- `/api/health`
+- GitHub Actions CI
+
+See [docs/deployment.md](docs/deployment.md).
 
 ## Privacy
 

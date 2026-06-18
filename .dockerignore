@@ -1,0 +1,13 @@
+.git
+.github
+app/.env
+app/.env.*
+!app/.env.example
+app/data
+app/workspace
+app/logs
+app/__pycache__
+app/**/*.pyc
+app/server.err.log
+app/server.out.log
+.pytest_cache

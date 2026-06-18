@@ -39,22 +39,28 @@ def load_env_files() -> None:
 
 load_env_files()
 
+
+def env_path(name: str, default: Path) -> Path:
+    value = os.environ.get(name)
+    return Path(value).expanduser() if value else default
+
+
 PUBLIC_DIR = APP_DIR / "public"
-DATA_DIR = APP_DIR / "data"
-WORKSPACE_DIR = APP_DIR / "workspace"
+DATA_DIR = env_path("JOB_ASSISTANT_DATA_DIR", APP_DIR / "data")
+WORKSPACE_DIR = env_path("JOB_ASSISTANT_WORKSPACE_DIR", APP_DIR / "workspace")
 DB_PATH = DATA_DIR / "career_copilot.sqlite"
 PROFILE_PATH = DATA_DIR / "profile.json"
 USER_CONTEXT_PATH = DATA_DIR / "user_context.json"
 APPLY_ASSIST_DIR = DATA_DIR / "apply-assist"
 BROWSER_PROFILE_DIR = DATA_DIR / "browser-profile"
 RESUME_UPLOAD_DIR = DATA_DIR / "resumes"
-DEFAULT_RESUME_PDF = APP_DIR / "data" / "resumes" / "active-resume.pdf"
-RESUME_PATH = Path(os.environ.get("JOB_ASSISTANT_RESUME", DEFAULT_RESUME_PDF))
+DEFAULT_RESUME_PDF = RESUME_UPLOAD_DIR / "active-resume.pdf"
+RESUME_PATH = env_path("JOB_ASSISTANT_RESUME", DEFAULT_RESUME_PDF)
 REFERENCE_RESUME_DIR = DEFAULT_RESUME_PDF.parent
 PROFILE_PHOTO_PATH = REFERENCE_RESUME_DIR / "profile-photo.jpg"
 
 APP_HOST = os.environ.get("JOB_ASSISTANT_HOST", "127.0.0.1")
-APP_PORT = int(os.environ.get("JOB_ASSISTANT_PORT", "8787"))
+APP_PORT = int(os.environ.get("PORT") or os.environ.get("JOB_ASSISTANT_PORT", "8787"))
 NOTION_VERSION = os.environ.get("NOTION_VERSION", "2022-06-28")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
@@ -563,6 +569,18 @@ def ensure_dirs() -> None:
         WORKSPACE_DIR / "reports",
     ]:
         path.mkdir(parents=True, exist_ok=True)
+
+
+def health_payload() -> dict:
+    ensure_dirs()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("select 1").fetchone()
+    return {
+        "ok": True,
+        "app": "job-assistant",
+        "time": now_iso(),
+        "database": str(DB_PATH),
+    }
 
 
 @contextmanager
@@ -4681,7 +4699,9 @@ class CareerHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         try:
-            if parsed.path == "/api/summary":
+            if parsed.path == "/api/health":
+                json_response(self, health_payload())
+            elif parsed.path == "/api/summary":
                 json_response(self, summary())
             elif parsed.path == "/api/regions":
                 json_response(self, regions_payload())
@@ -4855,7 +4875,10 @@ def main() -> None:
     load_env_files()
     setup_db()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), CareerHandler)
-    print(f"Job Assistant running at http://{APP_HOST}:{APP_PORT}")
+    display_host = "127.0.0.1" if APP_HOST in {"0.0.0.0", "::"} else APP_HOST
+    print(f"Job Assistant running at http://{display_host}:{APP_PORT}")
+    if display_host != APP_HOST:
+        print(f"Listening on {APP_HOST}:{APP_PORT}")
     print(f"Database: {DB_PATH}")
     server.serve_forever()
 

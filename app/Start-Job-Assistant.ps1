@@ -8,7 +8,7 @@ $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $HostName = "127.0.0.1"
 $Port = 8787
 $Url = "http://$HostName`:$Port/"
-$ApiUrl = "${Url}api/summary"
+$HealthUrl = "${Url}api/health"
 $LogDir = Join-Path $AppDir "logs"
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
@@ -21,7 +21,7 @@ function Write-LauncherLog {
 
 function Test-JobAssistant {
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri $ApiUrl -TimeoutSec 4 | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri $HealthUrl -TimeoutSec 4 | Out-Null
     return $true
   } catch {
     return $false
@@ -56,6 +56,9 @@ if (-not (Test-JobAssistant)) {
       Write-LauncherLog "Port $Port is already used by process $($listener.OwningProcess): $commandLine"
       throw "Port $Port is already in use by another process."
     }
+    Write-LauncherLog "Restarting stale Job Assistant process $($listener.OwningProcess)."
+    Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
   }
 
   $pythonPath = Get-PythonPath

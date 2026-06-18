@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: job-assistant
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: JOB_ASSISTANT_HOST
+        value: 0.0.0.0
+      - key: JOB_ASSISTANT_DATA_DIR
+        value: /data/app-data
+      - key: JOB_ASSISTANT_WORKSPACE_DIR
+        value: /data/workspace
+    disk:
+      name: job-assistant-data
+      mountPath: /data
+      sizeGB: 1
