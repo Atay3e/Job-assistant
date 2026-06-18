@@ -10,10 +10,6 @@ services:
       - key: JOB_ASSISTANT_HOST
         value: 0.0.0.0
       - key: JOB_ASSISTANT_DATA_DIR
-        value: /data/app-data
+        value: /tmp/job-assistant/app-data
       - key: JOB_ASSISTANT_WORKSPACE_DIR
-        value: /data/workspace
-    disk:
-      name: job-assistant-data
-      mountPath: /data
-      sizeGB: 1
+        value: /tmp/job-assistant/workspace

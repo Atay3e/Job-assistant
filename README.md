@@ -31,7 +31,7 @@ http://127.0.0.1:8787
 
 ## Public Deployment
 
-For a stable URL that other people can open, deploy the repository to Render:
+For a public URL that other people can open, deploy the repository to Render:
 
 ```text
 https://render.com/deploy?repo=https://github.com/Atay3e/Job-assistant
@@ -45,6 +45,8 @@ The repo includes:
 - GitHub Actions CI
 
 See [docs/deployment.md](docs/deployment.md).
+
+The included Render blueprint is free-tier compatible and uses temporary storage. For real public use with durable data, upgrade to persistent storage or move the app to an external database and object storage.
 
 ## Privacy
 

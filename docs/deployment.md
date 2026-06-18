@@ -1,10 +1,16 @@
 # Deploy 求职助手
 
-`http://127.0.0.1:8787` is a local-only address. It works only while the app is running on your own computer.
+`http://127.0.0.1:8787` is local-only. It works only while the app is running on your own computer.
 
-For a stable URL that other people can open, deploy the app to a web service. The repository includes a Dockerfile and a Render blueprint.
+## What Can Host This App
 
-## One-Click Render Deploy
+GitHub can host the repository and run CI, but GitHub Pages cannot run this app because 求职助手 has a Python backend, SQLite data, file uploads, scanners, and browser-assisted application flows.
+
+Vercel is not the best direct target for the current version. It is excellent for frontends and serverless APIs, but this app currently expects a long-running Python process, local SQLite files, background scans, and Playwright support. A Vercel version would need a product refactor: external database, object storage, auth, and serverless-safe APIs.
+
+Render or Railway are better first deployment targets because they can run the existing Docker app with much less rewrite.
+
+## Render Free Deploy
 
 Open:
 
@@ -16,26 +22,35 @@ Use the default blueprint settings:
 
 - Service name: `job-assistant`
 - Environment: Docker
+- Plan: free
 - Health check: `/api/health`
-- Persistent disk: `/data`
 
-Render will generate a public URL similar to:
-
-```text
-https://job-assistant.onrender.com
-```
-
-## Environment Variables
-
-The blueprint sets the required public-hosting values:
+The free blueprint uses temporary storage:
 
 ```text
 JOB_ASSISTANT_HOST=0.0.0.0
+JOB_ASSISTANT_DATA_DIR=/tmp/job-assistant/app-data
+JOB_ASSISTANT_WORKSPACE_DIR=/tmp/job-assistant/workspace
+```
+
+This makes the free deployment pass Render's validation. The tradeoff is that uploaded resumes, SQLite data, and generated workspace files are not guaranteed to survive restarts or redeploys.
+
+## Stable Data Options
+
+For a real public product, use one of these:
+
+1. Render paid web service with a persistent disk, then set:
+
+```text
 JOB_ASSISTANT_DATA_DIR=/data/app-data
 JOB_ASSISTANT_WORKSPACE_DIR=/data/workspace
 ```
 
-Most cloud platforms provide `PORT` automatically. The app now uses that value when present.
+2. Refactor to external storage:
+
+- Postgres or Supabase for jobs, profiles, applications, and scan runs
+- S3 or Cloudflare R2 for resumes and generated documents
+- Login/account separation before opening it to many users
 
 ## Privacy Note
 
@@ -46,4 +61,4 @@ Do not upload local runtime folders to public hosting:
 - `app/logs/`
 - `.env`
 
-For a public multi-user product, the next step is adding account separation. This first deployment path is suitable for demos, private beta, and controlled sharing.
+The current free deploy path is good for demos and early testing. For real public users, add account separation and persistent external storage first.
