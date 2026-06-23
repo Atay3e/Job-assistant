@@ -3,8 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>求职助手</title>
-    <link rel="stylesheet" href="/styles.css?v=20260617-multi-region" />
+    <title>Job Assistant</title>
+    <script>
+      if (window.location.protocol === "file:") {
+        window.location.replace("http://127.0.0.1:8787/");
+      }
+    </script>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/styles.css?v=20260623-profile-options" />
   </head>
   <body>
     <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
@@ -14,7 +20,7 @@
         <div class="brand">
           <div class="brand-mark">JA</div>
           <div>
-            <div class="brand-title">求职助手</div>
+            <div class="brand-title">Job Assistant</div>
             <div class="brand-subtitle">多地区求职工作台</div>
           </div>
         </div>
@@ -42,13 +48,6 @@
             <h1>今天的求职操作台</h1>
             <p class="topbar-subtitle">自动扫描、定位推荐、人工确认投递，所有岗位 URL 会保留在本地追踪表。</p>
           </div>
-          <div class="region-toolbar" aria-label="Active job market">
-            <label>
-              <span>地区</span>
-              <select id="regionSelect"></select>
-            </label>
-            <div id="contextMini" class="context-mini">选择地区 · 配置身份</div>
-          </div>
         </header>
 
         <section class="metrics" aria-label="每日指标">
@@ -70,9 +69,82 @@
           </div>
         </section>
 
+        <section id="onboardingPanel" class="panel onboarding-panel" hidden>
+          <div class="onboarding-copy">
+            <p class="section-kicker">首次设置</p>
+            <h2>先告诉我这次找什么，之后推荐会更稳</h2>
+            <p class="small-text">除地区外都可以空着，薪资只影响排序和标签，不会隐藏岗位。</p>
+          </div>
+          <form id="onboardingForm" class="onboarding-form">
+            <label>
+              <span>目标地区</span>
+              <select name="active_region" id="onboardingRegion"></select>
+            </label>
+            <input type="hidden" name="employment_priority" value="both" />
+            <input type="hidden" name="target_directions" />
+            <div class="option-field wide">
+              <span class="option-label">求职重心</span>
+              <div id="onboardingPriorityOptions" class="option-chip-row" role="group" aria-label="求职重心"></div>
+            </div>
+            <div class="option-field wide">
+              <span class="option-label">方向</span>
+              <div id="onboardingDirectionOptions" class="option-chip-row" role="group" aria-label="方向"></div>
+              <details class="custom-option">
+                <summary>自定义补充</summary>
+                <input id="onboardingCustomDirections" placeholder="例如 ai-product, ux-product-design，可空" />
+              </details>
+            </div>
+            <label>
+              <span>最低薪资</span>
+              <select name="salary_min" id="onboardingSalaryMin"></select>
+            </label>
+            <label>
+              <span>理想薪资</span>
+              <select name="salary_preferred" id="onboardingSalaryPreferred"></select>
+            </label>
+            <label>
+              <span>薪资周期</span>
+              <select name="salary_period" id="onboardingSalaryPeriod"></select>
+            </label>
+            <label>
+              <span>简历</span>
+              <input id="onboardingResumeInput" name="resume" type="file" accept=".pdf,.docx,.md,.txt" />
+            </label>
+            <div class="form-actions wide">
+              <span id="onboardingStatus" class="form-status"></span>
+              <div class="onboarding-actions">
+                <button class="secondary-button" type="button" id="skipOnboardingBtn">先跳过</button>
+                <button class="primary-button" type="submit">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+                  保存并进入
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+
         <section class="view active" id="todayView">
           <div class="workbench-layout">
             <div class="primary-flow">
+              <section class="panel focus-panel" id="jobFocusPanel">
+                <div class="focus-copy">
+                  <p class="section-kicker">求职重心</p>
+                  <h2 id="focusTitle">Singapore · 都考虑</h2>
+                  <p id="focusSummary" class="small-text">画像更新后，今日岗位会按地区、方向、工作类型和薪资偏好重新排序。</p>
+                </div>
+                <div class="focus-controls">
+                  <label class="compact-label">
+                    <span>目标地区</span>
+                    <select id="focusRegion"></select>
+                  </label>
+                  <div>
+                    <span class="option-label">求职重心</span>
+                    <div id="focusPriorityQuick" class="option-chip-row compact" role="group" aria-label="快速切换求职重心"></div>
+                  </div>
+                </div>
+                <div id="focusTags" class="focus-tags"></div>
+              </section>
+
               <section class="panel career-snapshot">
                 <div>
                   <p class="section-kicker">职业定位</p>
@@ -88,18 +160,21 @@
                   <h2>按匹配逻辑查看岗位</h2>
                   <p id="recommendationContext" class="small-text">职业定位会影响排序，但不会覆盖 5.0 评分和身份限制规则。</p>
                 </div>
-                <div class="recommendation-tabs" role="group" aria-label="推荐岗位类别">
+                <div class="recommendation-tabs" role="group" aria-label="推荐视角">
                   <button class="recommendation-tab active" data-recommendation-view="fit">
-                    <span>定位推荐</span>
-                    <strong id="fitJobCount">0/20</strong>
+                    <span>适合我</span>
+                    <small>画像、地区、薪资软排序</small>
+                    <strong id="fitJobCount">0</strong>
                   </button>
                   <button class="recommendation-tab" data-recommendation-view="ai">
-                    <span>AI 相关</span>
-                    <strong id="aiJobCount">0/20</strong>
+                    <span>AI方向</span>
+                    <small>标题/JD 有 AI 信号</small>
+                    <strong id="aiJobCount">0</strong>
                   </button>
                   <button class="recommendation-tab" data-recommendation-view="general">
-                    <span>综合推荐</span>
-                    <strong id="generalJobCount">0/20</strong>
+                    <span>全部高分</span>
+                    <small>基础评分优先</small>
+                    <strong id="generalJobCount">0</strong>
                   </button>
                 </div>
               </div>
@@ -264,7 +339,7 @@
           <div class="section-head">
             <div>
               <p class="section-kicker">投递队列</p>
-              <h2>每日 15 个确认投递目标</h2>
+              <h2>投递队列</h2>
             </div>
           </div>
           <div id="queueList" class="job-list compact"></div>
@@ -414,13 +489,49 @@
               <h3>地区与身份</h3>
               <label><span>目标地区</span><select name="active_region" id="contextRegion"></select></label>
               <label><span>城市</span><select name="city" id="contextCity"></select></label>
-              <label class="wide"><span>身份/签证状态</span><input name="work_authorisation" placeholder="Work eligibility / visa status to confirm" /></label>
+              <input type="hidden" name="work_authorisation" />
+              <div class="option-field wide">
+                <span class="option-label">身份/签证状态</span>
+                <div id="workAuthOptions" class="option-chip-row" role="group" aria-label="身份/签证状态"></div>
+                <details class="custom-option">
+                  <summary>自定义补充</summary>
+                  <input id="customWorkAuth" placeholder="例如需要 EP sponsorship，可空" />
+                </details>
+              </div>
             </div>
             <div class="context-step">
               <p class="section-kicker">Step 2</p>
               <h3>目标方向</h3>
-              <label class="wide"><span>岗位方向</span><input name="target_directions" placeholder="ai-product, ux-product-design, user-research" /></label>
-              <label class="wide"><span>工作类型</span><input name="job_types" placeholder="Internship, Graduate, Full-time" /></label>
+              <input type="hidden" name="target_directions" />
+              <input type="hidden" name="job_types" />
+              <input type="hidden" name="employment_priority" />
+              <input type="hidden" name="salary_currency" />
+              <div class="option-field wide">
+                <span class="option-label">求职重心</span>
+                <div id="contextPriorityOptions" class="option-chip-row" role="group" aria-label="求职重心"></div>
+              </div>
+              <div class="option-field wide">
+                <span class="option-label">岗位方向</span>
+                <div id="contextDirectionOptions" class="option-chip-row" role="group" aria-label="岗位方向"></div>
+                <details class="custom-option">
+                  <summary>自定义补充</summary>
+                  <input id="customDirections" placeholder="例如 ai-product, ux-product-design，可空" />
+                </details>
+              </div>
+              <div class="option-field wide">
+                <span class="option-label">工作类型</span>
+                <div id="contextJobTypeOptions" class="option-chip-row" role="group" aria-label="工作类型"></div>
+                <details class="custom-option">
+                  <summary>自定义补充</summary>
+                  <input id="customJobTypes" placeholder="例如 Traineeship，可空" />
+                </details>
+              </div>
+              <div class="salary-option-grid">
+                <label><span>薪资币种</span><div id="salaryCurrencyDisplay" class="readonly-field">SGD</div></label>
+                <label><span>薪资周期</span><select name="salary_period" id="contextSalaryPeriod"></select></label>
+                <label><span>最低薪资</span><select name="salary_min" id="contextSalaryMin"></select></label>
+                <label><span>理想薪资</span><select name="salary_preferred" id="contextSalaryPreferred"></select></label>
+              </div>
             </div>
             <div class="context-step">
               <p class="section-kicker">Step 3</p>
@@ -476,6 +587,6 @@
       <div id="detailBody" class="detail-body"></div>
     </dialog>
 
-    <script src="/app.js?v=20260617-multi-region"></script>
+    <script src="/app.js?v=20260623-visual-polish"></script>
   </body>
 </html>

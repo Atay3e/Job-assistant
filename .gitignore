@@ -14,6 +14,8 @@ app/server.err.log
 app/server.out.log
 
 # Python / test artifacts
+.venv/
+app/.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/

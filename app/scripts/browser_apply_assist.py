@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -170,6 +171,24 @@ def keep_browser_open(context, result_path: Path, result: dict) -> None:
             break
 
 
+def local_chromium_executable() -> str | None:
+    candidates = [
+        os.environ.get("CHROME_PATH", ""),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("Usage: browser_apply_assist.py payload.json")
@@ -193,10 +212,16 @@ def main() -> int:
     }
     try:
         with sync_playwright() as p:
+            launch_options = {
+                "headless": bool(payload.get("headless", False)),
+                "viewport": {"width": 1440, "height": 950},
+            }
+            browser_path = local_chromium_executable()
+            if browser_path:
+                launch_options["executable_path"] = browser_path
             context = p.chromium.launch_persistent_context(
                 payload["browser_profile_dir"],
-                headless=bool(payload.get("headless", False)),
-                viewport={"width": 1440, "height": 950},
+                **launch_options,
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)

@@ -225,6 +225,258 @@ COMPANY_CATALOG = [
         "default_watch": True,
     },
     {
+        "region": "SG",
+        "company": "IKEA Singapore",
+        "source": "Company Site",
+        "url": "https://jobs.ikea.com/en/location/singapore-jobs/22908/1880251/2",
+        "focus": "Retail experience, service design, customer operations, visual merchandising",
+        "company_type": "Retail / Service Design",
+        "city_tags": ["Singapore"],
+        "tags": ["本地服务品牌", "体验设计"],
+        "language_signal": "English first",
+        "recommend_reason": "强服务体验场景，适合把 service design / customer journey 讲成业务价值。",
+        "priority": 80,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "MUJI Singapore",
+        "source": "Company Site",
+        "url": "https://www.muji.com/sg/",
+        "focus": "Retail operations, customer experience, visual merchandising, brand service",
+        "company_type": "Retail / Lifestyle",
+        "city_tags": ["Singapore"],
+        "tags": ["本地服务品牌", "日系品牌"],
+        "language_signal": "English first",
+        "recommend_reason": "适合关注品牌体验、门店服务和生活方式零售相关机会。",
+        "priority": 76,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "foodpanda Singapore",
+        "source": "Company Site",
+        "url": "https://careers.foodpanda.com/singapore",
+        "focus": "Product operations, commercial, logistics, marketing, analytics",
+        "company_type": "Food Delivery / Local Services",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "运营"],
+        "language_signal": "English first",
+        "recommend_reason": "本地生活服务场景强，适合 product ops、growth、service experience。",
+        "priority": 85,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "POP MART Singapore",
+        "source": "Company Site",
+        "url": "https://www.popmart.com/sg",
+        "focus": "Retail operations, brand, community, IP, visual merchandising",
+        "company_type": "Consumer / IP Retail",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "消费品牌"],
+        "language_signal": "Chinese-friendly likely",
+        "recommend_reason": "中国品牌出海场景，适合讲跨文化用户、IP 社群和零售体验。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Changi Airport Group",
+        "source": "Company Site",
+        "url": "https://www.changiairport.com/en/careers/job-opportunities.html",
+        "focus": "Internships, customer experience, digital product, service operations",
+        "company_type": "Travel / Service Experience",
+        "city_tags": ["Singapore"],
+        "tags": ["本地标杆", "实习"],
+        "language_signal": "English first",
+        "recommend_reason": "服务设计和体验运营场景非常强，适合用作品集讲 journey / touchpoint。",
+        "priority": 87,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "ByteDance",
+        "source": "Company Site",
+        "url": "https://jobs.bytedance.com/en/position",
+        "focus": "AI product, design, content platform, operations, trust and safety",
+        "company_type": "Internet / AI",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "AI"],
+        "language_signal": "Chinese-friendly likely",
+        "recommend_reason": "新加坡岗位多，中文和中国互联网背景可能是加分项。",
+        "priority": 94,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Tencent Singapore",
+        "source": "Company Site",
+        "url": "https://careers.tencent.com/en-us/home.html",
+        "focus": "Product, design, gaming, cloud, international operations",
+        "company_type": "Internet / Gaming",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "产品"],
+        "language_signal": "Chinese-friendly likely",
+        "recommend_reason": "适合关注游戏、云服务和国际产品运营方向。",
+        "priority": 81,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Trip.com Group",
+        "source": "Company Site",
+        "url": "https://careers.trip.com/",
+        "focus": "Travel product, customer experience, operations, content, growth",
+        "company_type": "Travel Tech",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "出海"],
+        "language_signal": "Chinese-friendly likely",
+        "recommend_reason": "旅游平台和跨境用户场景适合讲多语言体验、服务流程和增长。",
+        "priority": 79,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "PatSnap",
+        "source": "Company Site",
+        "url": "https://www.patsnap.com/careers/",
+        "focus": "AI product, UX, research, data, product engineering",
+        "company_type": "AI / IP Intelligence",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "设计与产品"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "AI + 知识工作场景强，和 AI product / UX research 匹配度高。",
+        "priority": 86,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Hypotenuse AI",
+        "source": "Company Site",
+        "url": "https://careers.hypotenuse.ai/",
+        "focus": "Generative AI product, content workflow, growth, design",
+        "company_type": "AI Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "高潜力初创"],
+        "language_signal": "English first",
+        "recommend_reason": "生成式 AI 产品场景直接，适合 AI product 和内容工作流经验。",
+        "priority": 83,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "WIZ.AI",
+        "source": "Company Site",
+        "url": "https://www.wiz.ai/pages/join-us.html",
+        "focus": "Conversational AI, product, customer success, operations",
+        "company_type": "AI Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "中文友好概率较高"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "对话式 AI 和企业服务场景，适合讲 AI workflow 与用户研究。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "ADVANCE.AI",
+        "source": "Company Site",
+        "url": "https://advanceai.tech/about-us/careers/",
+        "focus": "AI, fintech, risk products, data operations, product management",
+        "company_type": "AI / Fintech",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "Fintech"],
+        "language_signal": "English first",
+        "recommend_reason": "AI 风控和金融科技场景，适合产品、运营和数据相关实习。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "AI Singapore",
+        "source": "Company Site",
+        "url": "https://aisingapore.org/home/careers/",
+        "focus": "AI programmes, research translation, product, education, community",
+        "company_type": "AI / Public Programme",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "本地标杆"],
+        "language_signal": "English first",
+        "recommend_reason": "本地 AI 生态核心组织，适合关注 AI 产品、项目和研究转化机会。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "AiChat",
+        "source": "Company Site",
+        "url": "https://www.aichat.com/careers/",
+        "focus": "Conversational commerce, chatbot product, customer success, marketing",
+        "company_type": "AI Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "产品运营"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "AI chatbot 与商业转化场景，适合 AI operations / product ops。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Horizon Labs",
+        "source": "Company Site",
+        "url": "https://www.horizon-labs.co/",
+        "focus": "AI product, software, automation, startup generalist roles",
+        "company_type": "AI Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "高潜力初创"],
+        "language_signal": "English first",
+        "recommend_reason": "适合关注小团队 AI 产品和泛产品/运营机会。",
+        "priority": 77,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Fabrica Robotics",
+        "source": "Company Site",
+        "url": "https://www.fabricarobotics.com/careers",
+        "focus": "Robotics, product, operations, hardware-software experience",
+        "company_type": "Robotics Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "硬件体验"],
+        "language_signal": "English first",
+        "recommend_reason": "机器人和实体体验场景，适合把交互、原型和服务流程结合起来讲。",
+        "priority": 76,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "k-ID",
+        "source": "Company Site",
+        "url": "https://www.k-id.com/careers",
+        "focus": "Trust and safety, product, youth digital experience, policy operations",
+        "company_type": "Safety Tech Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["高潜力初创", "产品"],
+        "language_signal": "English first",
+        "recommend_reason": "信任安全和年轻用户体验场景，适合 UX research / product ops。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "BeeX",
+        "source": "Company Site",
+        "url": "https://www.beex.sg/careers",
+        "focus": "Robotics, maritime, product operations, design-adjacent systems",
+        "company_type": "Robotics Startup",
+        "city_tags": ["Singapore"],
+        "tags": ["高潜力初创", "硬件体验"],
+        "language_signal": "English first",
+        "recommend_reason": "适合关注机器人、海事科技和复杂系统体验相关机会。",
+        "priority": 75,
+        "default_watch": False,
+    },
+    {
         "region": "CN",
         "company": "ByteDance",
         "source": "Company Site",
@@ -404,10 +656,125 @@ SOURCE_LIMITS = {
     "Indeed": 12,
     "JobStreet": 24,
     "Company Site": 24,
+    "Google Jobs": 24,
     "LinkedIn AI": 18,
     "InternSG AI": 12,
     "Indeed AI": 8,
     "JobStreet AI": 12,
+}
+
+EMPLOYMENT_PRIORITY_VALUES = {"internship", "full_time", "both", "unspecified"}
+EMPLOYMENT_TYPE_VALUES = {"Internship", "Full-time", "Graduate", "Contract", "Unknown"}
+SALARY_PERIODS = {"monthly", "yearly", "daily", "hourly", "unknown"}
+LIMITED_SCAN_SOURCES = {"Indeed", "JobStreet"}
+REGION_CURRENCIES = {"SG": "SGD", "CN": "CNY", "HK": "HKD"}
+WORK_AUTH_OPTIONS = {
+    "SG": [
+        {"value": "Student Pass", "label": "Student Pass"},
+        {"value": "Singapore work eligibility to be confirmed", "label": "待确认"},
+        {"value": "EP/S Pass sponsorship needed", "label": "需要工签支持"},
+        {"value": "Citizen / PR", "label": "Citizen / PR"},
+    ],
+    "CN": [
+        {"value": "China mainland work eligibility to be confirmed", "label": "待确认"},
+        {"value": "Mainland China citizen", "label": "中国大陆身份"},
+        {"value": "Work permit / visa support needed", "label": "需要工作许可支持"},
+    ],
+    "HK": [
+        {"value": "Hong Kong work eligibility to be confirmed", "label": "待确认"},
+        {"value": "IANG / student visa", "label": "IANG / 学生签"},
+        {"value": "Work visa sponsorship needed", "label": "需要工签支持"},
+        {"value": "HK permanent resident", "label": "HK PR"},
+    ],
+}
+JOB_TYPE_OPTIONS = [
+    {"value": "Internship", "label": "Internship"},
+    {"value": "Graduate", "label": "Graduate"},
+    {"value": "Full-time", "label": "Full-time"},
+    {"value": "Contract", "label": "Contract"},
+]
+EMPLOYMENT_PRIORITY_OPTIONS = [
+    {"value": "internship", "label": "实习为主"},
+    {"value": "full_time", "label": "正式工为主"},
+    {"value": "both", "label": "都考虑"},
+    {"value": "unspecified", "label": "暂不确定"},
+]
+SALARY_PERIOD_OPTIONS = [
+    {"value": "monthly", "label": "月薪"},
+    {"value": "yearly", "label": "年薪"},
+    {"value": "daily", "label": "日薪"},
+    {"value": "hourly", "label": "时薪"},
+]
+SALARY_BAND_OPTIONS = {
+    "SG": {
+        "monthly": [
+            {"value": "", "label": "先不填"},
+            {"value": "800", "label": "SGD 800+"},
+            {"value": "1200", "label": "SGD 1,200+"},
+            {"value": "1800", "label": "SGD 1,800+"},
+            {"value": "2500", "label": "SGD 2,500+"},
+            {"value": "3500", "label": "SGD 3,500+"},
+        ],
+        "yearly": [
+            {"value": "", "label": "先不填"},
+            {"value": "30000", "label": "SGD 30k+"},
+            {"value": "45000", "label": "SGD 45k+"},
+            {"value": "60000", "label": "SGD 60k+"},
+        ],
+        "daily": [
+            {"value": "", "label": "先不填"},
+            {"value": "80", "label": "SGD 80+/天"},
+            {"value": "120", "label": "SGD 120+/天"},
+            {"value": "180", "label": "SGD 180+/天"},
+        ],
+        "hourly": [
+            {"value": "", "label": "先不填"},
+            {"value": "10", "label": "SGD 10+/时"},
+            {"value": "15", "label": "SGD 15+/时"},
+            {"value": "25", "label": "SGD 25+/时"},
+        ],
+    },
+    "CN": {
+        "monthly": [
+            {"value": "", "label": "先不填"},
+            {"value": "3000", "label": "CNY 3,000+"},
+            {"value": "6000", "label": "CNY 6,000+"},
+            {"value": "10000", "label": "CNY 10,000+"},
+            {"value": "15000", "label": "CNY 15,000+"},
+        ],
+        "yearly": [
+            {"value": "", "label": "先不填"},
+            {"value": "80000", "label": "CNY 80k+"},
+            {"value": "150000", "label": "CNY 150k+"},
+            {"value": "250000", "label": "CNY 250k+"},
+        ],
+    },
+    "HK": {
+        "monthly": [
+            {"value": "", "label": "先不填"},
+            {"value": "8000", "label": "HKD 8,000+"},
+            {"value": "12000", "label": "HKD 12,000+"},
+            {"value": "18000", "label": "HKD 18,000+"},
+            {"value": "25000", "label": "HKD 25,000+"},
+        ],
+        "yearly": [
+            {"value": "", "label": "先不填"},
+            {"value": "180000", "label": "HKD 180k+"},
+            {"value": "300000", "label": "HKD 300k+"},
+            {"value": "450000", "label": "HKD 450k+"},
+        ],
+    },
+}
+SCAN_SOURCE_MODES = {
+    "LinkedIn（含 AI 关键词）": "primary",
+    "InternSG（含 AI 关键词）": "primary",
+    "Google Jobs": "primary",
+    "Indeed": "supplemental",
+    "JobStreet": "supplemental",
+    "公司官网": "company",
+    "JobsDB": "primary",
+    "LinkedIn": "primary",
+    "Mainland Public Search": "primary",
 }
 
 AI_EXPLICIT_KEYWORDS = [
@@ -741,6 +1108,14 @@ def setup_db() -> None:
                 external_job_id text,
                 location text not null default 'Singapore',
                 job_type text,
+                employment_type text not null default 'Unknown',
+                conversion_opportunity integer not null default 0,
+                salary_min real,
+                salary_max real,
+                salary_currency text,
+                salary_period text,
+                salary_text text,
+                salary_fit text not null default 'unknown',
                 jd_text text not null,
                 jd_hash text not null,
                 score real not null default 0,
@@ -872,6 +1247,14 @@ def setup_db() -> None:
         ensure_column(conn, "jobs", "region", "text not null default 'SG'")
         ensure_column(conn, "jobs", "city", "text")
         ensure_column(conn, "jobs", "source_region", "text")
+        ensure_column(conn, "jobs", "employment_type", "text not null default 'Unknown'")
+        ensure_column(conn, "jobs", "conversion_opportunity", "integer not null default 0")
+        ensure_column(conn, "jobs", "salary_min", "real")
+        ensure_column(conn, "jobs", "salary_max", "real")
+        ensure_column(conn, "jobs", "salary_currency", "text")
+        ensure_column(conn, "jobs", "salary_period", "text")
+        ensure_column(conn, "jobs", "salary_text", "text")
+        ensure_column(conn, "jobs", "salary_fit", "text not null default 'unknown'")
         ensure_column(conn, "applications", "assist_payload_path", "text")
         ensure_column(conn, "applications", "assist_result_path", "text")
         ensure_column(conn, "applications", "assist_status", "text")
@@ -881,6 +1264,7 @@ def setup_db() -> None:
         ensure_column(conn, "scan_runs", "source_region", "text")
         migrate_watch_companies_table(conn)
         seed_default_watch_companies(conn)
+        backfill_job_metadata(conn)
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
@@ -1109,16 +1493,19 @@ def default_region_context(region: str) -> dict:
             "work_authorisation": "Singapore work eligibility to be confirmed",
             "target_directions": ["ai-product", "ux-product-design", "user-research"],
             "job_types": ["Internship", "Graduate", "Full-time"],
+            "employment_priority": "both",
         },
         "CN": {
             "work_authorisation": "China mainland work eligibility to be confirmed",
             "target_directions": ["ai-product", "ux-product-design", "growth-content"],
             "job_types": ["Internship", "Graduate", "Full-time"],
+            "employment_priority": "both",
         },
         "HK": {
             "work_authorisation": "Hong Kong work eligibility to be confirmed",
             "target_directions": ["ai-product", "ux-product-design", "product-ops"],
             "job_types": ["Internship", "Graduate", "Full-time"],
+            "employment_priority": "both",
         },
     }[code]
     return {
@@ -1127,6 +1514,11 @@ def default_region_context(region: str) -> dict:
         "work_authorisation": defaults["work_authorisation"],
         "target_directions": list(defaults["target_directions"]),
         "job_types": list(defaults["job_types"]),
+        "employment_priority": defaults["employment_priority"],
+        "salary_currency": REGION_CURRENCIES.get(code, ""),
+        "salary_period": "monthly",
+        "salary_min": None,
+        "salary_preferred": None,
         "company_focus": [],
         "exclude_keywords": [],
         "updated_at": now_iso(),
@@ -1152,7 +1544,19 @@ def merge_user_context(stored: dict) -> dict:
     for code in REGION_CONFIGS:
         if isinstance(contexts.get(code), dict):
             base = merged["contexts"][code]
-            for key in ["city", "work_authorisation", "target_directions", "job_types", "company_focus", "exclude_keywords"]:
+            for key in [
+                "city",
+                "work_authorisation",
+                "target_directions",
+                "job_types",
+                "employment_priority",
+                "salary_currency",
+                "salary_period",
+                "salary_min",
+                "salary_preferred",
+                "company_focus",
+                "exclude_keywords",
+            ]:
                 if key in contexts[code]:
                     base[key] = contexts[code][key]
             base["region"] = code
@@ -1181,6 +1585,24 @@ def save_user_context(payload: dict) -> dict:
     for key in ["city", "work_authorisation"]:
         if key in updates:
             target[key] = str(updates.get(key) or "").strip() or target[key]
+    if "employment_priority" in updates:
+        priority = str(updates.get("employment_priority") or "unspecified").strip()
+        target["employment_priority"] = priority if priority in EMPLOYMENT_PRIORITY_VALUES else "unspecified"
+    if "salary_currency" in updates:
+        target["salary_currency"] = str(updates.get("salary_currency") or "").strip().upper()
+    if "salary_period" in updates:
+        period = str(updates.get("salary_period") or "monthly").strip()
+        target["salary_period"] = period if period in SALARY_PERIODS else "monthly"
+    for key in ["salary_min", "salary_preferred"]:
+        if key in updates:
+            raw_value = str(updates.get(key) or "").replace(",", "").strip()
+            if not raw_value:
+                target[key] = None
+            else:
+                try:
+                    target[key] = max(0.0, float(raw_value))
+                except ValueError:
+                    target[key] = None
     for key in ["target_directions", "job_types", "company_focus", "exclude_keywords"]:
         if key in updates:
             values = updates.get(key) or []
@@ -1218,6 +1640,34 @@ def regions_payload() -> dict:
             }
             for code, config in REGION_CONFIGS.items()
         ],
+    }
+
+
+def profile_options_payload(region: str | None = None) -> dict:
+    code = active_region_code(region)
+    config = REGION_CONFIGS[code]
+    currency = REGION_CURRENCIES.get(code, "")
+    salary_bands = {key: list(value) for key, value in SALARY_BAND_OPTIONS.get(code, {}).items()}
+    if "daily" not in salary_bands:
+        salary_bands["daily"] = SALARY_BAND_OPTIONS["SG"]["daily"]
+    if "hourly" not in salary_bands:
+        salary_bands["hourly"] = SALARY_BAND_OPTIONS["SG"]["hourly"]
+    return {
+        "region": code,
+        "label": config["label"],
+        "cities": config["cities"],
+        "default_city": config["default_city"],
+        "salary_currency": currency,
+        "regions": [{"value": key, "label": value["label"]} for key, value in REGION_CONFIGS.items()],
+        "work_authorisation_options": WORK_AUTH_OPTIONS.get(code, WORK_AUTH_OPTIONS["SG"]),
+        "employment_priority_options": EMPLOYMENT_PRIORITY_OPTIONS,
+        "direction_options": [
+            {"value": item["id"], "label": item["label"]}
+            for item in CAREER_DIRECTIONS
+        ],
+        "job_type_options": JOB_TYPE_OPTIONS,
+        "salary_period_options": SALARY_PERIOD_OPTIONS,
+        "salary_band_options": salary_bands,
     }
 
 
@@ -1673,6 +2123,182 @@ def hard_flag_patterns(text: str) -> list[str]:
     return sorted(set(flags))
 
 
+def detect_employment_type(position: str, jd_text: str = "", job_type: str = "") -> str:
+    text = f"{position}\n{job_type}\n{jd_text}".lower()
+    if re.search(r"\b(intern|internship)\b|实习|實習", text):
+        return "Internship"
+    if re.search(r"\b(graduate|graduate programme|graduate program|new grad|fresh graduate|management associate|graduate trainee)\b|校招|应届|應屆", text):
+        return "Graduate"
+    if re.search(r"\b(contract|contractor|temporary|temp|fixed[-\s]?term|freelance|part[-\s]?time)\b|兼职|合约|合約", text):
+        return "Contract"
+    if re.search(r"\b(full[-\s]?time|permanent)\b|正式|全职|全職", text):
+        return "Full-time"
+    return "Unknown"
+
+
+def detect_conversion_opportunity(position: str, jd_text: str = "", job_type: str = "") -> bool:
+    text = f"{position}\n{job_type}\n{jd_text}".lower()
+    if re.search(r"\b(no|not|without)\s+(guarantee|guaranteed|promise|possibility)?\s*(of\s+)?(conversion|return offer|full[-\s]?time offer)", text):
+        return False
+    patterns = [
+        r"\bconvert(?:ed|ible|sion)?\s+(?:to|into)?\s*(?:a\s+)?full[-\s]?time\b",
+        r"\bfull[-\s]?time\s+conversion\b",
+        r"\breturn\s+offer\b",
+        r"\bfull[-\s]?time\s+offer\b",
+        r"\bpermanent\s+conversion\b",
+        r"(转正|轉正|留用|留任)",
+    ]
+    return any(re.search(pattern, text, flags=re.I) for pattern in patterns)
+
+
+def normalize_salary_currency(value: str) -> str:
+    token = (value or "").upper().replace(" ", "")
+    if token in {"S$", "SG$", "SGD", "$"}:
+        return "SGD"
+    if token in {"HK$", "HKD"}:
+        return "HKD"
+    if token in {"RMB", "CNY", "¥"}:
+        return "CNY"
+    if token in {"US$", "USD"}:
+        return "USD"
+    return token or "SGD"
+
+
+def normalize_salary_period(text: str, amount: float | None = None) -> str:
+    lowered = (text or "").lower()
+    if re.search(r"\b(per\s+annum|annually|annual|yearly|per\s+year|p\.?\s*a\.?|/year|/yr)\b", lowered):
+        return "yearly"
+    if re.search(r"\b(monthly|per\s+month|/month|/mo|pm)\b", lowered):
+        return "monthly"
+    if re.search(r"\b(daily|per\s+day|/day|pd)\b", lowered):
+        return "daily"
+    if re.search(r"\b(hourly|per\s+hour|/hour|/hr|ph)\b", lowered):
+        return "hourly"
+    if amount and amount >= 30000:
+        return "yearly"
+    if amount and 500 <= amount <= 20000:
+        return "monthly"
+    if amount and amount < 80:
+        return "hourly"
+    return "unknown"
+
+
+def parse_salary_number(value: str, suffix: str = "") -> float:
+    amount = float((value or "0").replace(",", ""))
+    if suffix.lower() == "k":
+        amount *= 1000
+    return amount
+
+
+def parse_salary_info(position: str, jd_text: str = "", job_type: str = "", region: str | None = None) -> dict:
+    text = clean_text(f"{position}\n{job_type}\n{jd_text}")
+    pattern = re.compile(
+        r"(?P<currency>SGD|S\$|SG\$|HKD|HK\$|RMB|CNY|USD|US\$|\$|¥)\s*"
+        r"(?P<first>\d[\d,]*(?:\.\d+)?)\s*(?P<first_suffix>[kK])?"
+        r"(?:\s*(?:-|–|—|~|to|至|到)\s*"
+        r"(?:(?:SGD|S\$|SG\$|HKD|HK\$|RMB|CNY|USD|US\$|\$|¥)\s*)?"
+        r"(?P<second>\d[\d,]*(?:\.\d+)?)\s*(?P<second_suffix>[kK])?)?",
+        flags=re.I,
+    )
+    for match in pattern.finditer(text):
+        start, end = match.span()
+        window = text[max(0, start - 24): min(len(text), end + 42)]
+        first = parse_salary_number(match.group("first"), match.group("first_suffix") or "")
+        second = parse_salary_number(match.group("second"), match.group("second_suffix") or "") if match.group("second") else first
+        salary_min = min(first, second)
+        salary_max = max(first, second)
+        if salary_max <= 0:
+            continue
+        currency = normalize_salary_currency(match.group("currency"))
+        period = normalize_salary_period(window, salary_max)
+        return {
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "salary_currency": currency,
+            "salary_period": period,
+            "salary_text": clean_text(window),
+            "salary_fit": "unknown",
+        }
+    return {
+        "salary_min": None,
+        "salary_max": None,
+        "salary_currency": "",
+        "salary_period": "unknown",
+        "salary_text": "",
+        "salary_fit": "unknown",
+    }
+
+
+def salary_to_monthly(amount: float | int | None, period: str | None) -> float | None:
+    if amount is None:
+        return None
+    value = float(amount)
+    if value <= 0:
+        return None
+    period = period or "unknown"
+    if period == "monthly":
+        return value
+    if period == "yearly":
+        return value / 12
+    if period == "daily":
+        return value * 22
+    if period == "hourly":
+        return value * 160
+    return value
+
+
+def job_metadata(position: str, jd_text: str = "", job_type: str = "", region: str | None = None) -> dict:
+    salary = parse_salary_info(position, jd_text, job_type, region)
+    return {
+        "employment_type": detect_employment_type(position, jd_text, job_type),
+        "conversion_opportunity": 1 if detect_conversion_opportunity(position, jd_text, job_type) else 0,
+        **salary,
+    }
+
+
+def backfill_job_metadata(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        select id, position, jd_text, job_type, region, employment_type, salary_fit
+        from jobs
+        where employment_type is null
+           or salary_period is null
+           or salary_fit is null
+           or salary_fit = ''
+        limit 1000
+        """
+    ).fetchall()
+    for row in rows:
+        metadata = job_metadata(row["position"] or "", row["jd_text"] or "", row["job_type"] or "", row["region"])
+        conn.execute(
+            """
+            update jobs set
+                employment_type=?,
+                conversion_opportunity=?,
+                salary_min=?,
+                salary_max=?,
+                salary_currency=?,
+                salary_period=?,
+                salary_text=?,
+                salary_fit=?,
+                updated_at=coalesce(updated_at, ?)
+            where id=?
+            """,
+            (
+                metadata["employment_type"],
+                metadata["conversion_opportunity"],
+                metadata["salary_min"],
+                metadata["salary_max"],
+                metadata["salary_currency"],
+                metadata["salary_period"],
+                metadata["salary_text"],
+                metadata["salary_fit"],
+                now_iso(),
+                row["id"],
+            ),
+        )
+
+
 def keyword_score(text: str, keywords: list[str], full_points: int) -> float:
     lowered = text.lower()
     hits = sum(1 for kw in keywords if has_keyword(lowered, kw))
@@ -1745,14 +2371,23 @@ def score_job(company: str, position: str, jd_text: str, source: str) -> tuple[f
     if any(has_keyword(title_lowered, word) for word in ["design", "product", "ux", "user", "experience"]):
         role_fit = max(role_fit, 0.75)
 
-    if any(has_keyword(title_lowered, word) for word in seniority_negative):
+    has_seniority_negative = any(has_keyword(title_lowered, word) for word in seniority_negative)
+    if has_seniority_negative:
         seniority_fit = 0.2
-    elif any(word in lowered for word in seniority_positive):
-        seniority_fit = 1.0
-    elif "full-time" in lowered or "full time" in lowered:
-        seniority_fit = 0.7
     else:
-        seniority_fit = 0.55
+        employment_type = detect_employment_type(position, jd_text)
+        if employment_type in {"Internship", "Graduate"}:
+            seniority_fit = 1.0
+        elif employment_type == "Full-time":
+            seniority_fit = 0.7
+        elif employment_type == "Contract":
+            seniority_fit = 0.6
+        elif any(word in lowered for word in seniority_positive):
+            seniority_fit = 1.0
+        else:
+            seniority_fit = 0.55
+        if any(word in lowered for word in seniority_positive) and seniority_fit < 1.0:
+            seniority_fit = 1.0
 
     if any(flag in flags for flag in ["citizen_or_pr_only", "local_only", "clearance_required"]):
         eligibility_fit = 0.0
@@ -2030,6 +2665,78 @@ def region_queries(region: str | None = None, ai_only: bool = False) -> list[str
     return list(base)
 
 
+def fetch_google_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    api_key = os.environ.get("SERPAPI_KEY", "").strip()
+    if not api_key:
+        return [], []
+    code = active_region_code(region)
+    location = REGION_CONFIGS[code]["search_location"]
+    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
+    jobs: list[dict] = []
+    failures: list[str] = []
+    seen: set[str] = set()
+    for query in region_queries(code)[:4]:
+        if len(jobs) >= limit:
+            break
+        params = urlencode(
+            {
+                "engine": "google_jobs",
+                "q": query,
+                "location": location,
+                "hl": "en",
+                "api_key": api_key,
+            }
+        )
+        request = urllib.request.Request(
+            f"https://serpapi.com/search.json?{params}",
+            headers={"User-Agent": "Job Assistant local app"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+        except Exception as exc:
+            failures.append(f"Google Jobs {query}: {exc}")
+            continue
+        for item in payload.get("jobs_results") or []:
+            if len(jobs) >= limit:
+                break
+            title = clean_text(item.get("title") or "")
+            company = clean_text(item.get("company_name") or "")
+            if not title or not company:
+                continue
+            apply_link = ""
+            related_links = item.get("related_links") or []
+            detected_extensions = item.get("detected_extensions") or {}
+            apply_options = item.get("apply_options") or []
+            if apply_options:
+                apply_link = apply_options[0].get("link") or ""
+            if not apply_link and related_links:
+                apply_link = related_links[0].get("link") or ""
+            if not apply_link:
+                apply_link = item.get("share_link") or item.get("job_id") or ""
+            dedupe_key = apply_link or f"{company}|{title}|{item.get('location')}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            description = clean_text(item.get("description") or "")
+            extensions = " ".join(str(value) for value in detected_extensions.values() if value)
+            jobs.append(
+                {
+                    "company": company,
+                    "position": title,
+                    "source": "Google Jobs",
+                    "url": apply_link if apply_link.startswith("http") else f"https://www.google.com/search?q={quote_plus(company + ' ' + title + ' job')}",
+                    "location": clean_text(item.get("location") or location),
+                    "region": code,
+                    "city": city,
+                    "source_region": code,
+                    "job_type": clean_text(extensions) or "Google Jobs",
+                    "jd_text": (description or f"{title}\n{company}\nSource query: {query}")[:12000],
+                }
+            )
+    return jobs, failures
+
+
 def fetch_linkedin_jobs(limit: int, queries: list[str] | None = None, region: str | None = None) -> tuple[list[dict], list[str]]:
     jobs: list[dict] = []
     failures: list[str] = []
@@ -2102,7 +2809,13 @@ def fetch_internsg_jobs(limit: int, queries: list[str] | None = None) -> tuple[l
     return jobs, failures
 
 
-def fetch_indeed_jobs(limit: int, queries: list[str] | None = None, region: str | None = None) -> tuple[list[dict], list[str]]:
+def fetch_indeed_jobs(
+    limit: int,
+    queries: list[str] | None = None,
+    region: str | None = None,
+    time_budget_seconds: float = 18,
+    failure_limit: int = 2,
+) -> tuple[list[dict], list[str]]:
     jobs: list[dict] = []
     failures: list[str] = []
     seen: set[str] = set()
@@ -2112,12 +2825,19 @@ def fetch_indeed_jobs(limit: int, queries: list[str] | None = None, region: str 
         return [], [f"Indeed is not configured for {REGION_CONFIGS[code]['label']}."]
     location = REGION_CONFIGS[code]["search_location"]
     query_list = queries if queries is not None else region_queries(code)[:4]
+    started = time.monotonic()
     for query in query_list:
         if len(jobs) >= limit:
             break
+        if time.monotonic() - started > time_budget_seconds:
+            failures.append("Indeed 受限：来源级时间预算已用完，已跳过剩余查询。")
+            break
+        if len(failures) >= failure_limit:
+            failures.append("Indeed 受限：连续失败较多，已跳过剩余查询。")
+            break
         url = f"https://{host}/jobs?q={quote_plus(query)}&l={quote_plus(location)}&fromage=7&sort=date"
         try:
-            html = http_get(url)
+            html = http_get(url, timeout=8, retries=0)
         except Exception as exc:
             failures.append(f"Indeed {query}: {exc}")
             continue
@@ -2137,22 +2857,35 @@ def fetch_indeed_jobs(limit: int, queries: list[str] | None = None, region: str 
     return jobs, failures
 
 
-def fetch_jobstreet_jobs(limit: int, queries: list[str] | None = None, region: str | None = None) -> tuple[list[dict], list[str]]:
+def fetch_jobstreet_jobs(
+    limit: int,
+    queries: list[str] | None = None,
+    region: str | None = None,
+    time_budget_seconds: float = 24,
+    failure_limit: int = 3,
+) -> tuple[list[dict], list[str]]:
     code = active_region_code(region)
     if code != "SG":
         return [], [f"JobStreet connector is Singapore-only in this version."]
     jobs: list[dict] = []
     failures: list[str] = []
     seen: set[str] = set()
+    started = time.monotonic()
     for query in (queries or TARGET_QUERIES):
         if len(jobs) >= limit:
+            break
+        if time.monotonic() - started > time_budget_seconds:
+            failures.append("JobStreet 受限：来源级时间预算已用完，已跳过剩余查询。")
+            break
+        if len(failures) >= failure_limit:
+            failures.append("JobStreet 受限：连续失败较多，已跳过剩余查询。")
             break
         query_jobs: list[dict] = []
         for url in jobstreet_search_urls(query):
             if len(query_jobs) >= max(1, limit // max(1, len(queries or TARGET_QUERIES))):
                 break
             try:
-                html = http_get(url, timeout=22, retries=1)
+                html = http_get(url, timeout=8, retries=0)
             except Exception as exc:
                 failures.append(f"JobStreet {query}: {exc}")
                 continue
@@ -2169,7 +2902,7 @@ def fetch_jobstreet_jobs(limit: int, queries: list[str] | None = None, region: s
             seen.add(url)
             job["url"] = url
             try:
-                detail_html = http_get(url, timeout=18, retries=1)
+                detail_html = http_get(url, timeout=6, retries=0)
                 detail_text = clean_text(detail_html)
                 if detail_text:
                     job["jd_text"] = detail_text[:12000]
@@ -2180,6 +2913,74 @@ def fetch_jobstreet_jobs(limit: int, queries: list[str] | None = None, region: s
             job["source_region"] = code
             jobs.append(job)
     return jobs, failures
+
+
+def merge_fetch_results(fetch_calls: list[tuple[int, object]], limit: int) -> tuple[list[dict], list[str]]:
+    jobs: list[dict] = []
+    failures: list[str] = []
+    seen: set[str] = set()
+    for call_limit, fetcher in fetch_calls:
+        if len(jobs) >= limit:
+            break
+        try:
+            raw_jobs, raw_failures = fetcher(min(call_limit, max(1, limit - len(jobs))))
+        except Exception as exc:
+            raw_jobs, raw_failures = [], [str(exc)]
+        failures.extend(str(item) for item in raw_failures)
+        for job in raw_jobs:
+            source = job.get("source") or ""
+            url = canonical_job_url(source, job.get("url", ""), job.get("external_job_id"))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            job["url"] = url
+            jobs.append(job)
+            if len(jobs) >= limit:
+                break
+    return jobs, failures
+
+
+def fetch_linkedin_jobs_with_ai(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    return merge_fetch_results(
+        [
+            (SOURCE_LIMITS["LinkedIn"], lambda call_limit: fetch_linkedin_jobs(call_limit, region=code)),
+            (SOURCE_LIMITS["LinkedIn AI"], lambda call_limit: fetch_linkedin_jobs(call_limit, region_queries(code, ai_only=True), code)),
+        ],
+        limit,
+    )
+
+
+def fetch_internsg_jobs_with_ai(limit: int) -> tuple[list[dict], list[str]]:
+    return merge_fetch_results(
+        [
+            (SOURCE_LIMITS["InternSG"], lambda call_limit: fetch_internsg_jobs(call_limit)),
+            (SOURCE_LIMITS["InternSG AI"], lambda call_limit: fetch_internsg_jobs(call_limit, AI_TARGET_QUERIES)),
+        ],
+        limit,
+    )
+
+
+def fetch_indeed_jobs_with_ai(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    return merge_fetch_results(
+        [
+            (SOURCE_LIMITS["Indeed"], lambda call_limit: fetch_indeed_jobs(call_limit, region=code)),
+            (SOURCE_LIMITS["Indeed AI"], lambda call_limit: fetch_indeed_jobs(call_limit, region_queries(code, ai_only=True), code, 10, 1)),
+        ],
+        limit,
+    )
+
+
+def fetch_jobstreet_jobs_with_ai(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    return merge_fetch_results(
+        [
+            (SOURCE_LIMITS["JobStreet"], lambda call_limit: fetch_jobstreet_jobs(call_limit, region=code)),
+            (SOURCE_LIMITS["JobStreet AI"], lambda call_limit: fetch_jobstreet_jobs(call_limit, region_queries(code, ai_only=True), code, 12, 1)),
+        ],
+        limit,
+    )
 
 
 def fetch_company_site_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
@@ -2323,33 +3124,54 @@ def fetch_jobsdb_hk_jobs(limit: int) -> tuple[list[dict], list[str]]:
 def scan_source_definitions(region: str | None = None) -> list[tuple[str, object, int]]:
     code = active_region_code(region)
     if code == "SG":
-        return [
-            ("LinkedIn", lambda limit: fetch_linkedin_jobs(limit, region=code), SOURCE_LIMITS["LinkedIn"]),
-            ("LinkedIn AI", lambda limit: fetch_linkedin_jobs(limit, region_queries(code, ai_only=True), code), SOURCE_LIMITS["LinkedIn AI"]),
-            ("InternSG", fetch_internsg_jobs, SOURCE_LIMITS["InternSG"]),
-            ("InternSG AI", lambda limit: fetch_internsg_jobs(limit, AI_TARGET_QUERIES), SOURCE_LIMITS["InternSG AI"]),
-            ("Indeed", lambda limit: fetch_indeed_jobs(limit, region=code), SOURCE_LIMITS["Indeed"]),
-            ("Indeed AI", lambda limit: fetch_indeed_jobs(limit, region_queries(code, ai_only=True), code), SOURCE_LIMITS["Indeed AI"]),
-            ("JobStreet", lambda limit: fetch_jobstreet_jobs(limit, region=code), SOURCE_LIMITS["JobStreet"]),
-            ("JobStreet AI", lambda limit: fetch_jobstreet_jobs(limit, region_queries(code, ai_only=True), code), SOURCE_LIMITS["JobStreet AI"]),
-            ("Company Site", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
+        sources = [
+            ("LinkedIn（含 AI 关键词）", lambda limit: fetch_linkedin_jobs_with_ai(limit, code), SOURCE_LIMITS["LinkedIn"] + SOURCE_LIMITS["LinkedIn AI"]),
+            ("InternSG（含 AI 关键词）", fetch_internsg_jobs_with_ai, SOURCE_LIMITS["InternSG"] + SOURCE_LIMITS["InternSG AI"]),
+            ("Indeed", lambda limit: fetch_indeed_jobs_with_ai(limit, code), SOURCE_LIMITS["Indeed"] + SOURCE_LIMITS["Indeed AI"]),
+            ("JobStreet", lambda limit: fetch_jobstreet_jobs_with_ai(limit, code), SOURCE_LIMITS["JobStreet"] + SOURCE_LIMITS["JobStreet AI"]),
+            ("公司官网", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
         ]
+        if os.environ.get("SERPAPI_KEY"):
+            sources.insert(2, ("Google Jobs", lambda limit: fetch_google_jobs(limit, code), SOURCE_LIMITS["Google Jobs"]))
+        return sources
     if code == "HK":
         return [
-            ("LinkedIn", lambda limit: fetch_linkedin_jobs(limit, region=code), SOURCE_LIMITS["LinkedIn"]),
-            ("LinkedIn AI", lambda limit: fetch_linkedin_jobs(limit, region_queries(code, ai_only=True), code), SOURCE_LIMITS["LinkedIn AI"]),
+            ("LinkedIn（含 AI 关键词）", lambda limit: fetch_linkedin_jobs_with_ai(limit, code), SOURCE_LIMITS["LinkedIn"] + SOURCE_LIMITS["LinkedIn AI"]),
             ("JobsDB", fetch_jobsdb_hk_jobs, 24),
-            ("Company Site", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
+            ("公司官网", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
         ]
     return [
         ("LinkedIn", lambda limit: fetch_linkedin_jobs(limit, region=code), SOURCE_LIMITS["LinkedIn"]),
         ("Mainland Public Search", fetch_mainland_public_jobs, 24),
-        ("Company Site", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
+        ("公司官网", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
     ]
 
 
 def expected_scan_sources(region: str | None = None) -> list[str]:
     return [source_name for source_name, _fetcher, _limit in scan_source_definitions(region)]
+
+
+def scan_source_mode(source: str) -> str:
+    return SCAN_SOURCE_MODES.get(source, "supplemental" if is_limited_scan_source(source) else "primary")
+
+
+def expected_scan_source_details(region: str | None = None) -> list[dict]:
+    return [
+        {"source": source, "mode": scan_source_mode(source)}
+        for source in expected_scan_sources(region)
+    ]
+
+
+def is_limited_scan_source(source: str) -> bool:
+    return any(name.lower() in (source or "").lower() for name in LIMITED_SCAN_SOURCES)
+
+
+def has_limited_failure(failures: list[dict | str]) -> bool:
+    for failure in failures:
+        text = failure.get("error", "") if isinstance(failure, dict) else str(failure)
+        if "受限" in text or "limited" in text.lower():
+            return True
+    return False
 
 
 def create_scan_run(triggered_by: str = "manual", forced: bool = False, region: str | None = None) -> int:
@@ -2432,14 +3254,77 @@ def finish_scan_run(scan_run_id: int, status: str, scanned: int, saved: int, rec
         )
 
 
+def scan_thread_alive(scan_run_id: int) -> bool:
+    with SCAN_THREADS_LOCK:
+        thread = SCAN_THREADS.get(scan_run_id)
+    return bool(thread and thread.is_alive())
+
+
+def mark_scan_run_interrupted(scan_run_id: int) -> None:
+    stamp = now_iso()
+    interrupted = {"source": "scan", "error": "Previous scan was interrupted before completion. Start a new scan."}
+    with get_db() as conn:
+        run = conn.execute("select failures_json from scan_runs where id=? and status='running'", (scan_run_id,)).fetchone()
+        if not run:
+            return
+        try:
+            failures = json.loads(run["failures_json"] or "[]")
+        except json.JSONDecodeError:
+            failures = []
+        failures.append(interrupted)
+        totals = conn.execute(
+            """
+            select
+                coalesce(sum(scanned_count), 0) as scanned,
+                coalesce(sum(saved_count), 0) as saved,
+                coalesce(sum(failure_count), 0) as failure_count
+            from scan_source_runs
+            where scan_run_id=?
+            """,
+            (scan_run_id,),
+        ).fetchone()
+        conn.execute(
+            """
+            update scan_source_runs
+            set finished_at=?, status='interrupted', updated_at=?
+            where scan_run_id=? and status='running'
+            """,
+            (stamp, stamp, scan_run_id),
+        )
+        conn.execute(
+            """
+            update scan_runs
+            set finished_at=?,
+                status='interrupted',
+                scanned_count=?,
+                saved_count=?,
+                failures_json=?,
+                updated_at=?
+            where id=? and status='running'
+            """,
+            (
+                stamp,
+                int(totals["scanned"] or 0),
+                int(totals["saved"] or 0),
+                json.dumps(failures, ensure_ascii=False),
+                stamp,
+                scan_run_id,
+            ),
+        )
+
+
 def get_scan_run(scan_run_id: int) -> dict:
+    with get_db() as conn:
+        run = conn.execute("select status from scan_runs where id=?", (scan_run_id,)).fetchone()
+    if run and run["status"] == "running" and not scan_thread_alive(scan_run_id):
+        mark_scan_run_interrupted(scan_run_id)
     with get_db() as conn:
         run = conn.execute("select * from scan_runs where id=?", (scan_run_id,)).fetchone()
         if not run:
             raise KeyError(f"Scan run {scan_run_id} not found.")
         out = row_to_dict(run)
         rows = conn.execute("select * from scan_source_runs where scan_run_id=? order by id", (scan_run_id,)).fetchall()
-        out["sources"] = [row_to_dict(row) for row in rows]
+        out["sources"] = [{**row_to_dict(row), "mode": scan_source_mode(row["source"])} for row in rows]
         return out
 
 
@@ -2473,7 +3358,7 @@ def latest_successful_scan(run_date: str | None = None, region: str | None = Non
             row = conn.execute(
                 """
                 select * from scan_runs
-                where run_date=? and region=? and status in ('success', 'partial')
+                where run_date=? and region=? and status in ('success', 'partial', 'limited')
                 order by started_at desc
                 limit 1
                 """,
@@ -2483,7 +3368,7 @@ def latest_successful_scan(run_date: str | None = None, region: str | None = Non
             row = conn.execute(
                 """
                 select * from scan_runs
-                where run_date=? and status in ('success', 'partial')
+                where run_date=? and status in ('success', 'partial', 'limited')
                 order by started_at desc
                 limit 1
                 """,
@@ -2537,7 +3422,14 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
                 item = {"source": source_name, "url": url, "error": str(exc)}
                 failures.append(item)
                 source_failure_items.append(item)
-        source_status = "success" if not source_failure_items else ("partial" if raw_jobs else "failed")
+        if not source_failure_items:
+            source_status = "success"
+        elif raw_jobs:
+            source_status = "partial"
+        elif is_limited_scan_source(source_name) or has_limited_failure(source_failure_items):
+            source_status = "limited"
+        else:
+            source_status = "failed"
         finish_scan_source_run(source_run_id, source_status, len(raw_jobs), source_saved, source_failure_items)
 
     recommended = [
@@ -2548,7 +3440,14 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
     ]
     recommended.sort(key=lambda item: item["score"], reverse=True)
     ai_recommended = len(list_ai_jobs({"limit": ["20"], "region": [code]}))
-    run_status = "success" if not failures else ("partial" if sum(source_counts.values()) else "failed")
+    if not failures:
+        run_status = "success"
+    elif sum(source_counts.values()):
+        run_status = "partial"
+    elif has_limited_failure(failures):
+        run_status = "limited"
+    else:
+        run_status = "failed"
     finish_scan_run(scan_run_id, run_status, sum(source_counts.values()), len(saved), len(recommended), ai_recommended, failures[:80])
     generate_report(code)
     result = {
@@ -2591,7 +3490,10 @@ def running_scan_run(region: str | None = None) -> dict | None:
                 limit 1
                 """
             ).fetchone()
-    return get_scan_run(row["id"]) if row else None
+    if not row:
+        return None
+    run = get_scan_run(row["id"])
+    return run if run["status"] == "running" else None
 
 
 def scan_status_payload(scan_run_id: int | None = None, region: str | None = None) -> dict:
@@ -2601,6 +3503,7 @@ def scan_status_payload(scan_run_id: int | None = None, region: str | None = Non
         "run": run,
         "region": code,
         "expected_sources": expected_scan_sources(code),
+        "expected_source_details": expected_scan_source_details(code),
         "running": bool(run and run.get("status") == "running"),
     }
 
@@ -3203,7 +4106,10 @@ def render_html_pdf(html_path: Path, output_path: Path) -> bool:
             f"--print-to-pdf={output_path}",
             html_path.resolve().as_uri(),
         ]
-        completed = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        try:
+            completed = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except (subprocess.SubprocessError, OSError):
+            return False
     return completed.returncode == 0 and output_path.exists() and output_path.stat().st_size > 10000
 
 
@@ -3355,6 +4261,7 @@ def upsert_job(payload: dict) -> dict:
     if not jd_text:
         jd_text = "JD not pasted yet. Preserve URL and update JD before drafting."
 
+    metadata = job_metadata(position, jd_text, job_type, region)
     score, flags, match_notes = score_job(company, position, jd_text, source)
     hard_blocked = any(flag in flags for flag in ["citizen_or_pr_only", "local_only", "clearance_required"])
     initial_status = "Recommended" if score >= 3.0 and not hard_blocked else "New"
@@ -3383,6 +4290,14 @@ def upsert_job(payload: dict) -> dict:
                     city=?,
                     source_region=?,
                     job_type=?,
+                    employment_type=?,
+                    conversion_opportunity=?,
+                    salary_min=?,
+                    salary_max=?,
+                    salary_currency=?,
+                    salary_period=?,
+                    salary_text=?,
+                    salary_fit=?,
                     jd_text=?,
                     jd_hash=?,
                     score=?,
@@ -3405,6 +4320,14 @@ def upsert_job(payload: dict) -> dict:
                     city,
                     source_region,
                     job_type,
+                    metadata["employment_type"],
+                    metadata["conversion_opportunity"],
+                    metadata["salary_min"],
+                    metadata["salary_max"],
+                    metadata["salary_currency"],
+                    metadata["salary_period"],
+                    metadata["salary_text"],
+                    metadata["salary_fit"],
                     jd_text,
                     jd_hash,
                     score,
@@ -3422,11 +4345,13 @@ def upsert_job(payload: dict) -> dict:
             conn.execute(
                 """
                 insert into jobs(
-                    company, position, name, source, url, external_job_id, location, region, city, source_region, job_type, jd_text, jd_hash,
+                    company, position, name, source, url, external_job_id, location, region, city, source_region,
+                    job_type, employment_type, conversion_opportunity, salary_min, salary_max,
+                    salary_currency, salary_period, salary_text, salary_fit, jd_text, jd_hash,
                     score, status, eligibility_flags, match_notes, found_date, batch_date,
                     recommended_date, last_checked_at, resume_path, cover_letter_path, created_at, updated_at
                 )
-                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     company,
@@ -3440,6 +4365,14 @@ def upsert_job(payload: dict) -> dict:
                     city,
                     source_region,
                     job_type,
+                    metadata["employment_type"],
+                    metadata["conversion_opportunity"],
+                    metadata["salary_min"],
+                    metadata["salary_max"],
+                    metadata["salary_currency"],
+                    metadata["salary_period"],
+                    metadata["salary_text"],
+                    metadata["salary_fit"],
                     jd_text,
                     jd_hash,
                     score,
@@ -3699,6 +4632,62 @@ def region_fit_for_job(job: dict, region: str, watched_companies: set[str]) -> d
     }
 
 
+def employment_preference_for_job(job: dict, context: dict) -> dict:
+    priority = context.get("employment_priority") or "unspecified"
+    employment_type = job.get("employment_type") or "Unknown"
+    boost = 0.0
+    label = ""
+    if priority == "internship":
+        if employment_type == "Internship":
+            boost, label = 0.28, "实习优先"
+        elif employment_type == "Graduate":
+            boost, label = 0.12, "Graduate 可考虑"
+        elif employment_type == "Full-time":
+            boost, label = -0.08, "正式工次优先"
+    elif priority == "full_time":
+        if employment_type == "Full-time":
+            boost, label = 0.24, "正式工优先"
+        elif employment_type == "Graduate":
+            boost, label = 0.12, "Graduate 可考虑"
+        elif employment_type == "Internship":
+            boost, label = -0.08, "实习次优先"
+    elif priority == "both" and employment_type in {"Internship", "Graduate", "Full-time"}:
+        boost, label = 0.08, "类型匹配"
+    return {
+        "employment_boost": round(boost, 2),
+        "employment_fit_label": label,
+    }
+
+
+def salary_preference_for_job(job: dict, context: dict, strong_match_score: float) -> dict:
+    preferred = context.get("salary_preferred")
+    minimum = context.get("salary_min")
+    target = preferred or minimum
+    if not target:
+        return {"salary_adjustment": 0.0, "salary_fit": job.get("salary_fit") or "unknown", "salary_fit_label": "薪资未设置偏好"}
+    if not job.get("salary_max"):
+        return {"salary_adjustment": 0.0, "salary_fit": "unknown", "salary_fit_label": "薪资未知"}
+
+    context_currency = (context.get("salary_currency") or "").upper()
+    job_currency = (job.get("salary_currency") or "").upper()
+    if context_currency and job_currency and context_currency != job_currency:
+        return {"salary_adjustment": 0.0, "salary_fit": "unknown", "salary_fit_label": "薪资币种待确认"}
+
+    job_min_monthly = salary_to_monthly(job.get("salary_min"), job.get("salary_period"))
+    job_max_monthly = salary_to_monthly(job.get("salary_max"), job.get("salary_period"))
+    context_monthly = salary_to_monthly(target, context.get("salary_period") or "monthly")
+    preferred_monthly = salary_to_monthly(preferred, context.get("salary_period") or "monthly") if preferred else context_monthly
+    if not job_max_monthly or not context_monthly:
+        return {"salary_adjustment": 0.0, "salary_fit": "unknown", "salary_fit_label": "薪资待确认"}
+
+    if job_max_monthly < context_monthly:
+        label = "薪资偏低 · 其他匹配强" if strong_match_score >= 4.0 else "薪资偏低"
+        return {"salary_adjustment": -0.16, "salary_fit": "low", "salary_fit_label": label}
+    if preferred_monthly and job_min_monthly and job_min_monthly >= preferred_monthly:
+        return {"salary_adjustment": 0.12, "salary_fit": "strong", "salary_fit_label": "薪资达偏好"}
+    return {"salary_adjustment": 0.06, "salary_fit": "match", "salary_fit_label": "薪资可接受"}
+
+
 def rank_job_with_preferences(job: dict, direction_ids: list[str], weights: dict, region: str | None = None, watched_companies: set[str] | None = None) -> dict:
     matched = []
     boost = 0.0
@@ -3723,11 +4712,27 @@ def rank_job_with_preferences(job: dict, direction_ids: list[str], weights: dict
     out["location_reason"] = region_fit["location_reason"]
     out["company_boost"] = region_fit["company_boost"]
     out["work_auth_fit"] = region_fit["work_auth_fit"]
-    out["rank_score"] = round(out["base_score"] + boost + out["company_boost"], 2)
+    context = active_region_context(code)
+    employment = employment_preference_for_job(out, context)
+    strong_match_score = out["base_score"] + boost + out["company_boost"] + employment["employment_boost"]
+    salary = salary_preference_for_job(out, context, strong_match_score)
+    conversion_boost = 0.0
+    if out.get("conversion_opportunity") and context.get("employment_priority") in {"internship", "both", "unspecified"}:
+        conversion_boost = 0.14
+    out.update(employment)
+    out.update(salary)
+    out["conversion_boost"] = round(conversion_boost, 2)
+    out["rank_score"] = round(out["base_score"] + boost + out["company_boost"] + out["employment_boost"] + out["salary_adjustment"] + conversion_boost, 2)
     out["matched_directions"] = matched
     out["fit_reasons"] = [f"{item['label']}: {', '.join(item['keywords'][:4])}" for item in matched]
     if out["company_boost"]:
         out["fit_reasons"].append("Watched company")
+    if out.get("employment_fit_label"):
+        out["fit_reasons"].append(out["employment_fit_label"])
+    if out.get("salary_fit_label") and out["salary_fit_label"] != "薪资未设置偏好":
+        out["fit_reasons"].append(out["salary_fit_label"])
+    if conversion_boost:
+        out["fit_reasons"].append("可转正机会")
     if out["location_reason"]:
         out["fit_reasons"].append(out["location_reason"])
     return out
@@ -4705,6 +5710,8 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 json_response(self, summary())
             elif parsed.path == "/api/regions":
                 json_response(self, regions_payload())
+            elif parsed.path == "/api/profile-options":
+                json_response(self, profile_options_payload((params.get("region") or [""])[0] or None))
             elif parsed.path == "/api/user-context":
                 json_response(self, load_user_context())
             elif parsed.path == "/api/company-catalog":

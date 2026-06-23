@@ -74,6 +74,23 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(jobs[0]["url"], "https://sg.jobstreet.com/job/98765432")
         self.assertIn("UI/UX", jobs[0]["position"])
 
+    def test_job_metadata_detects_employment_conversion_and_salary(self):
+        metadata = server.job_metadata(
+            "AI Product Intern",
+            "Monthly stipend SGD 1,200 - 1,800. Strong interns may receive a full-time conversion offer.",
+            "Internship",
+            "SG",
+        )
+        self.assertEqual(metadata["employment_type"], "Internship")
+        self.assertEqual(metadata["conversion_opportunity"], 1)
+        self.assertEqual(metadata["salary_currency"], "SGD")
+        self.assertEqual(metadata["salary_period"], "monthly")
+        self.assertEqual(metadata["salary_min"], 1200)
+        self.assertEqual(metadata["salary_max"], 1800)
+        self.assertEqual(server.detect_employment_type("Graduate Product Designer"), "Graduate")
+        self.assertEqual(server.detect_employment_type("Full-time UX Designer"), "Full-time")
+        self.assertEqual(server.detect_employment_type("Contract UX Researcher"), "Contract")
+
 
 class DailyRunTests(TempAppMixin, unittest.TestCase):
     def test_daily_run_once_and_force(self):
@@ -142,8 +159,63 @@ class RecommendationTests(TempAppMixin, unittest.TestCase):
         self.assertIn("citizen_or_pr_only", server.get_job(blocked["id"])["eligibility_flags"])
         self.assertFalse(server.is_recommendation_available(server.get_job(blocked["id"])))
 
+    def test_low_salary_soft_preference_does_not_hide_strong_match(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "internship",
+                    "salary_currency": "SGD",
+                    "salary_period": "monthly",
+                    "salary_min": 1800,
+                    "salary_preferred": 2200,
+                    "target_directions": ["ai-product"],
+                },
+            }
+        )
+        job = server.upsert_job(
+            {
+                "company": "Stipend Co",
+                "position": "AI Product Intern",
+                "source": "JobStreet",
+                "url": "https://sg.jobstreet.com/job/salary-soft",
+                "jd_text": "Singapore AI product intern LLM UX research workflow automation. Stipend SGD 1,000 per month.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.4, status='Recommended' where id=?", (job["id"],))
+
+        recommendations = server.list_today_recommendations({"limit": ["20"]})["jobs"]
+        ranked = next(item for item in recommendations if item["id"] == job["id"])
+        self.assertEqual(ranked["salary_fit"], "low")
+        self.assertIn("薪资偏低", ranked["salary_fit_label"])
+        self.assertIn(job["id"], [item["id"] for item in recommendations])
+
 
 class MultiRegionTests(TempAppMixin, unittest.TestCase):
+    def test_profile_options_follow_region_currency_and_choices(self):
+        sg_options = server.profile_options_payload("SG")
+        cn_options = server.profile_options_payload("CN")
+        hk_options = server.profile_options_payload("HK")
+
+        self.assertEqual(sg_options["salary_currency"], "SGD")
+        self.assertEqual(cn_options["salary_currency"], "CNY")
+        self.assertEqual(hk_options["salary_currency"], "HKD")
+        self.assertIn("Student Pass", [item["value"] for item in sg_options["work_authorisation_options"]])
+        self.assertIn("ai-product", [item["value"] for item in sg_options["direction_options"]])
+        self.assertIn("monthly", sg_options["salary_band_options"])
+
+    def test_singapore_company_catalog_has_new_radar_fields(self):
+        catalog = server.company_catalog("SG")
+        by_company = {item["company"]: item for item in catalog}
+
+        for company in ["IKEA Singapore", "foodpanda Singapore", "POP MART Singapore", "Changi Airport Group", "PatSnap", "Hypotenuse AI", "WIZ.AI", "ADVANCE.AI"]:
+            self.assertIn(company, by_company)
+            self.assertTrue(by_company[company].get("recommend_reason"))
+            self.assertTrue(by_company[company].get("tags"))
+
+        self.assertIn("中文友好概率较高", by_company["POP MART Singapore"]["tags"])
+
     def test_user_context_catalog_and_watchlist_crud(self):
         regions = server.regions_payload()
         self.assertEqual(regions["active_region"], "SG")
@@ -313,6 +385,68 @@ class CareerFitTests(TempAppMixin, unittest.TestCase):
 
 
 class AsyncScanTests(TempAppMixin, unittest.TestCase):
+    def test_scan_sources_merge_ai_queries_without_ai_visual_rows(self):
+        sources = server.expected_scan_sources("SG")
+        self.assertIn("LinkedIn（含 AI 关键词）", sources)
+        self.assertIn("InternSG（含 AI 关键词）", sources)
+        self.assertNotIn("LinkedIn AI", sources)
+        self.assertNotIn("InternSG AI", sources)
+
+        calls = []
+
+        def fake_linkedin(limit, queries=None, region=None):
+            calls.append(queries)
+            return [], []
+
+        with mock.patch.object(server, "fetch_linkedin_jobs", fake_linkedin):
+            fetcher = server.scan_source_definitions("SG")[0][1]
+            fetcher(5)
+
+        self.assertTrue(any(query is None for query in calls))
+        self.assertTrue(any(isinstance(query, list) and any("ai" in item.lower() for item in query) for query in calls))
+
+    def test_scan_source_details_mark_supplemental_sources(self):
+        details = {item["source"]: item["mode"] for item in server.expected_scan_source_details("SG")}
+
+        self.assertEqual(details["LinkedIn（含 AI 关键词）"], "primary")
+        self.assertEqual(details["InternSG（含 AI 关键词）"], "primary")
+        self.assertEqual(details["Indeed"], "supplemental")
+        self.assertEqual(details["JobStreet"], "supplemental")
+        self.assertEqual(details["公司官网"], "company")
+
+    def test_limited_source_failure_keeps_scan_partial_when_other_sources_save(self):
+        def good_source(limit):
+            return [
+                {
+                    "company": "Good Scan Co",
+                    "position": "AI Product Intern",
+                    "source": "InternSG",
+                    "url": "https://www.internsg.com/job/good-scan/",
+                    "jd_text": "Singapore AI product intern UX research service design.",
+                }
+            ], []
+
+        def limited_source(limit):
+            return [], ["Indeed 受限：连续失败较多，已跳过剩余查询。"]
+
+        with (
+            mock.patch.object(
+                server,
+                "scan_source_definitions",
+                return_value=[
+                    ("InternSG（含 AI 关键词）", good_source, 1),
+                    ("Indeed", limited_source, 1),
+                ],
+            ),
+            mock.patch.object(server, "generate_report"),
+        ):
+            result = server.scan_sources(region="SG")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["saved"], 1)
+        source_statuses = {item["source"]: item["status"] for item in result["scan_run"]["sources"]}
+        self.assertEqual(source_statuses["Indeed"], "limited")
+
     def test_async_scan_returns_running_run_and_finishes(self):
         def fake_scan_sources(triggered_by="manual", forced=True, scan_run_id=None, region=None):
             source_run_id = server.create_scan_source_run(scan_run_id, "Fixture")
@@ -343,6 +477,34 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
         self.assertFalse(payload["running"])
         self.assertEqual(payload["run"]["status"], "success")
         self.assertEqual(payload["run"]["sources"][0]["source"], "Fixture")
+
+    def test_stale_running_scan_is_interrupted_before_new_scan(self):
+        stale_run_id = server.create_scan_run("manual", True, "SG")
+        server.create_scan_source_run(stale_run_id, "InternSG")
+
+        def fake_scan_sources(triggered_by="manual", forced=True, scan_run_id=None, region=None):
+            server.finish_scan_run(scan_run_id, "success", 0, 0, 0, 0, [])
+            return {
+                "run_id": scan_run_id,
+                "status": "success",
+                "scanned": 0,
+                "saved": 0,
+                "recommended": 0,
+                "ai_recommended": 0,
+                "source_counts": {},
+                "failures": [],
+            }
+
+        with mock.patch.object(server, "scan_sources", fake_scan_sources):
+            started = server.start_scan_async(triggered_by="manual", forced=True, region="SG")
+            self.assertTrue(started["started"])
+            thread = server.SCAN_THREADS.get(started["run"]["id"])
+            if thread:
+                thread.join(timeout=1)
+
+        stale = server.get_scan_run(stale_run_id)
+        self.assertEqual(stale["status"], "interrupted")
+        self.assertEqual(stale["sources"][0]["status"], "interrupted")
 
 
 class ApplyAssistTests(TempAppMixin, unittest.TestCase):

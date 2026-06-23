@@ -1,3 +1,7 @@
+if (window.location.protocol === "file:") {
+  window.location.replace("http://127.0.0.1:8787/");
+}
+
 const state = {
   jobs: [],
   aiJobs: [],
@@ -6,6 +10,7 @@ const state = {
   watchlist: [],
   regions: { regions: [], active_region: "SG" },
   userContext: { active_region: "SG", contexts: {} },
+  profileOptions: {},
   companyCatalog: [],
   activeFilter: "",
   recommendationView: "fit",
@@ -19,6 +24,7 @@ const state = {
   careerFit: {},
   scan: {},
   scanPollTimer: null,
+  focusRefreshTimer: null,
   dailyRunChecked: false,
 };
 
@@ -65,7 +71,9 @@ const SCAN_STATUS_ZH = {
   running: "扫描中",
   success: "成功",
   partial: "部分成功",
+  limited: "受限",
   failed: "失败",
+  interrupted: "已中断",
 };
 
 const COMPANY_ALIASES = {
@@ -206,9 +214,162 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+function uniqueList(values) {
+  return Array.from(new Set((values || []).map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function optionLabel(options, value) {
+  return (options || []).find((item) => item.value === value)?.label || value || "";
+}
+
+function selectedValuesFromHidden(form, name) {
+  return uniqueList(splitList(form?.elements?.[name]?.value || ""));
+}
+
+function setHiddenList(form, name, values) {
+  if (form?.elements?.[name]) form.elements[name].value = uniqueList(values).join(", ");
+}
+
+function toggleValue(values, value, multi = true) {
+  if (!multi) return [value];
+  const set = new Set(values);
+  if (set.has(value)) set.delete(value);
+  else set.add(value);
+  return Array.from(set);
+}
+
+function salaryBandsForPeriod(period) {
+  const bands = state.profileOptions.salary_band_options || {};
+  return bands[period] || bands.monthly || [{ value: "", label: "先不填" }];
+}
+
+function setSelectOptions(select, options, selectedValue = "") {
+  if (!select) return;
+  const selected = String(selectedValue ?? "");
+  const normalized = [...(options || [])];
+  if (selected && !normalized.some((item) => String(item.value) === selected)) {
+    normalized.push({ value: selected, label: selected });
+  }
+  select.innerHTML = normalized
+    .map((item) => `<option value="${escapeHtml(item.value)}" ${String(item.value) === selected ? "selected" : ""}>${escapeHtml(item.label)}</option>`)
+    .join("");
+}
+
+function renderOptionButtons(containerId, options, selectedValues, config = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const selected = new Set(selectedValues || []);
+  const multi = config.multi !== false;
+  container.innerHTML = (options || [])
+    .map((item) => `
+      <button
+        type="button"
+        class="option-chip ${selected.has(item.value) ? "active" : ""}"
+        data-option-target="${escapeHtml(config.target || "")}"
+        data-option-value="${escapeHtml(item.value)}"
+        data-option-multi="${multi ? "true" : "false"}"
+      >${escapeHtml(item.label)}</button>
+    `)
+    .join("");
+}
+
+function salaryPreferenceLabel(context) {
+  const currency = context.salary_currency || state.profileOptions.salary_currency || "";
+  const period = periodLabel(context.salary_period || "monthly");
+  const minimum = context.salary_min ? `${currency} ${formatMoney(context.salary_min)}+` : "最低不限";
+  const preferred = context.salary_preferred ? `理想 ${currency} ${formatMoney(context.salary_preferred)}+` : "理想可空";
+  return `${minimum} · ${preferred} · ${period}`;
+}
+
+function syncContextCustomInputs(form) {
+  if (!form) return;
+  const directionValues = new Set((state.profileOptions.direction_options || []).map((item) => item.value));
+  const jobTypeValues = new Set((state.profileOptions.job_type_options || []).map((item) => item.value));
+  const selectedDirections = selectedValuesFromHidden(form, "target_directions").filter((item) => directionValues.has(item));
+  const customDirections = splitList(document.getElementById("customDirections")?.value || "");
+  setHiddenList(form, "target_directions", [...selectedDirections, ...customDirections]);
+  const selectedJobTypes = selectedValuesFromHidden(form, "job_types").filter((item) => jobTypeValues.has(item));
+  const customJobTypes = splitList(document.getElementById("customJobTypes")?.value || "");
+  setHiddenList(form, "job_types", [...selectedJobTypes, ...customJobTypes]);
+  const customWorkAuth = String(document.getElementById("customWorkAuth")?.value || "").trim();
+  if (customWorkAuth) form.elements.work_authorisation.value = customWorkAuth;
+}
+
+function syncOnboardingCustomInputs(form) {
+  if (!form) return;
+  const directionValues = new Set((state.profileOptions.direction_options || []).map((item) => item.value));
+  const selectedDirections = selectedValuesFromHidden(form, "target_directions").filter((item) => directionValues.has(item));
+  const customDirections = splitList(document.getElementById("onboardingCustomDirections")?.value || "");
+  setHiddenList(form, "target_directions", [...selectedDirections, ...customDirections]);
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
   return value.replace("T", " ");
+}
+
+function employmentTypeLabel(value) {
+  return {
+    Internship: "实习",
+    "Full-time": "正式工",
+    Graduate: "Graduate",
+    Contract: "Contract",
+    Unknown: "类型待确认",
+  }[value] || "类型待确认";
+}
+
+function periodLabel(value) {
+  return {
+    monthly: "月薪",
+    yearly: "年薪",
+    daily: "日薪",
+    hourly: "时薪",
+  }[value] || "薪资";
+}
+
+function formatMoney(value) {
+  const number = Number(value || 0);
+  if (!number) return "";
+  return number.toLocaleString("en-SG", { maximumFractionDigits: number % 1 ? 1 : 0 });
+}
+
+function salaryBadgeLabel(job) {
+  if (job.salary_fit_label && !["薪资未设置偏好"].includes(job.salary_fit_label)) {
+    return job.salary_fit_label;
+  }
+  if (!job.salary_max) return "薪资未知";
+  const currency = job.salary_currency || "";
+  const min = formatMoney(job.salary_min);
+  const max = formatMoney(job.salary_max);
+  const range = min && max && min !== max ? `${min}-${max}` : (max || min);
+  return `${currency} ${range} · ${periodLabel(job.salary_period)}`.trim();
+}
+
+function scanSourceLabel(source) {
+  const name = String(source || "");
+  if (name.includes("LinkedIn")) return "LinkedIn（含 AI 关键词）";
+  if (name.includes("InternSG")) return "InternSG（含 AI 关键词）";
+  if (name.includes("Indeed")) return "Indeed";
+  if (name.includes("JobStreet")) return "JobStreet";
+  if (name.includes("Company Site") || name.includes("公司官网")) return "公司官网";
+  return name || "未知来源";
+}
+
+function scanStatusPriority(status) {
+  return { failed: 6, limited: 5, partial: 4, running: 3, success: 2, interrupted: 1, pending: 0 }[status] ?? 0;
+}
+
+function mergeScanStatus(current, incoming) {
+  return scanStatusPriority(incoming) > scanStatusPriority(current) ? incoming : current;
+}
+
+function scanModeLabel(mode) {
+  return {
+    primary: "主来源",
+    supplemental: "补充",
+    limited: "受限",
+    company: "官网",
+  }[mode] || "来源";
 }
 
 function setTrackerDefaults() {
@@ -223,10 +384,12 @@ function renderUserContextControls() {
   const options = (state.regions.regions || [])
     .map((region) => `<option value="${escapeHtml(region.code)}" ${region.code === activeRegion() ? "selected" : ""}>${escapeHtml(region.label)}</option>`)
     .join("");
-  const regionSelect = document.getElementById("regionSelect");
+  const focusRegion = document.getElementById("focusRegion");
   const contextRegion = document.getElementById("contextRegion");
-  if (regionSelect) regionSelect.innerHTML = options;
+  const onboardingRegion = document.getElementById("onboardingRegion");
+  if (focusRegion) focusRegion.innerHTML = options;
   if (contextRegion) contextRegion.innerHTML = options;
+  if (onboardingRegion) onboardingRegion.innerHTML = options;
 
   const cityOptions = (config.cities || [config.default_city || "Singapore"])
     .map((city) => `<option value="${escapeHtml(city)}" ${city === (context.city || config.default_city) ? "selected" : ""}>${escapeHtml(city)}</option>`)
@@ -241,11 +404,72 @@ function renderUserContextControls() {
     form.elements.work_authorisation.value = context.work_authorisation || "";
     form.elements.target_directions.value = (context.target_directions || []).join(", ");
     form.elements.job_types.value = (context.job_types || []).join(", ");
+    form.elements.employment_priority.value = context.employment_priority || "both";
+    form.elements.salary_currency.value = context.salary_currency || state.profileOptions.salary_currency || "";
+
+    const workAuthValues = new Set((state.profileOptions.work_authorisation_options || []).map((item) => item.value));
+    const directionValues = new Set((state.profileOptions.direction_options || []).map((item) => item.value));
+    const jobTypeValues = new Set((state.profileOptions.job_type_options || []).map((item) => item.value));
+    document.getElementById("customWorkAuth").value = workAuthValues.has(context.work_authorisation) ? "" : (context.work_authorisation || "");
+    document.getElementById("customDirections").value = (context.target_directions || []).filter((item) => !directionValues.has(item)).join(", ");
+    document.getElementById("customJobTypes").value = (context.job_types || []).filter((item) => !jobTypeValues.has(item)).join(", ");
+
+    renderOptionButtons("workAuthOptions", state.profileOptions.work_authorisation_options || [], [context.work_authorisation || ""], { target: "context:work_authorisation", multi: false });
+    renderOptionButtons("contextPriorityOptions", state.profileOptions.employment_priority_options || [], [context.employment_priority || "both"], { target: "context:employment_priority", multi: false });
+    renderOptionButtons("contextDirectionOptions", state.profileOptions.direction_options || [], context.target_directions || [], { target: "context:target_directions" });
+    renderOptionButtons("contextJobTypeOptions", state.profileOptions.job_type_options || [], context.job_types || [], { target: "context:job_types" });
+
+    setSelectOptions(document.getElementById("contextSalaryPeriod"), state.profileOptions.salary_period_options || [], context.salary_period || "monthly");
+    const salaryBands = salaryBandsForPeriod(context.salary_period || "monthly");
+    setSelectOptions(document.getElementById("contextSalaryMin"), salaryBands, context.salary_min ?? "");
+    setSelectOptions(document.getElementById("contextSalaryPreferred"), salaryBands, context.salary_preferred ?? "");
+    document.getElementById("salaryCurrencyDisplay").textContent = context.salary_currency || state.profileOptions.salary_currency || "-";
   }
-  const mini = document.getElementById("contextMini");
-  if (mini) {
-    mini.textContent = `${config.label || activeRegion()} · ${context.city || config.default_city || ""} · ${context.work_authorisation || ""}`;
+  renderFocusPanel();
+  renderOnboarding();
+}
+
+function renderFocusPanel() {
+  const config = activeRegionConfig();
+  const context = activeRegionContext();
+  const priority = context.employment_priority || "both";
+  const priorityLabel = optionLabel(state.profileOptions.employment_priority_options, priority) || "都考虑";
+  document.getElementById("focusTitle").textContent = `${config.label || activeRegion()} · ${priorityLabel}`;
+  document.getElementById("focusSummary").textContent = `${context.city || config.default_city || ""} · ${salaryPreferenceLabel(context)} · 关注公司 ${state.watchlist.length || 0} 家`;
+  renderOptionButtons("focusPriorityQuick", state.profileOptions.employment_priority_options || [], [priority], { target: "focus:employment_priority", multi: false });
+  const directionOptions = state.profileOptions.direction_options || [];
+  const directionLabels = (context.target_directions || []).slice(0, 4).map((id) => optionLabel(directionOptions, id) || id);
+  const jobTypes = (context.job_types || []).slice(0, 3);
+  const tags = [
+    context.city || config.default_city || "",
+    ...directionLabels,
+    ...jobTypes,
+  ].filter(Boolean);
+  document.getElementById("focusTags").innerHTML = tags.length
+    ? tags.map((tag) => `<span class="chip-label active">${escapeHtml(tag)}</span>`).join("")
+    : `<span class="chip-label">方向可空</span>`;
+}
+
+function renderOnboarding() {
+  const panel = document.getElementById("onboardingPanel");
+  const form = document.getElementById("onboardingForm");
+  if (!panel || !form) return;
+  const context = activeRegionContext();
+  panel.hidden = Boolean(state.userContext?.onboarding_completed);
+  form.elements.active_region.value = activeRegion();
+  form.elements.employment_priority.value = context.employment_priority || "both";
+  form.elements.target_directions.value = (context.target_directions || []).join(", ");
+  const directionValues = new Set((state.profileOptions.direction_options || []).map((item) => item.value));
+  const customDirectionInput = document.getElementById("onboardingCustomDirections");
+  if (customDirectionInput) {
+    customDirectionInput.value = (context.target_directions || []).filter((item) => !directionValues.has(item)).join(", ");
   }
+  renderOptionButtons("onboardingPriorityOptions", state.profileOptions.employment_priority_options || [], [context.employment_priority || "both"], { target: "onboarding:employment_priority", multi: false });
+  renderOptionButtons("onboardingDirectionOptions", state.profileOptions.direction_options || [], context.target_directions || [], { target: "onboarding:target_directions" });
+  setSelectOptions(document.getElementById("onboardingSalaryPeriod"), state.profileOptions.salary_period_options || [], context.salary_period || "monthly");
+  const salaryBands = salaryBandsForPeriod(context.salary_period || "monthly");
+  setSelectOptions(document.getElementById("onboardingSalaryMin"), salaryBands, context.salary_min ?? "");
+  setSelectOptions(document.getElementById("onboardingSalaryPreferred"), salaryBands, context.salary_preferred ?? "");
 }
 
 function jobCard(job, compact = false, options = {}) {
@@ -259,6 +483,14 @@ function jobCard(job, compact = false, options = {}) {
     ? `<span class="badge fit-badge">定位 +${Number(job.preference_boost).toFixed(2)}</span>`
     : "";
   const regionBadge = job.region ? `<span class="badge">${escapeHtml(job.region)} · ${escapeHtml(job.city || job.location || "")}</span>` : "";
+  const employmentBadge = `<span class="badge job-type-badge">${escapeHtml(employmentTypeLabel(job.employment_type || "Unknown"))}</span>`;
+  const conversionBadge = Number(job.conversion_opportunity || 0) > 0
+    ? `<span class="badge good">可转正</span>`
+    : "";
+  const salaryLabel = salaryBadgeLabel(job);
+  const salaryBadge = salaryLabel
+    ? `<span class="badge salary-badge ${job.salary_fit === "low" ? "warn" : ""}">${escapeHtml(salaryLabel)}</span>`
+    : "";
   const companyBadge = Number(job.company_boost || 0) > 0
     ? `<span class="badge fit-badge">关注公司 +${Number(job.company_boost).toFixed(2)}</span>`
     : "";
@@ -287,7 +519,7 @@ function jobCard(job, compact = false, options = {}) {
           <span class="badge">${escapeHtml(job.source)}</span>
         </div>
         <div class="job-meta">推荐日期 ${escapeHtml(job.batch_date || "-")} · 发现日期 ${escapeHtml(job.found_date || "-")} · 投递日期 ${escapeHtml(job.applied_date || "-")}</div>
-        <div class="badge-row">${regionBadge}${fitBadge}${companyBadge}${aiBadge}${matched}${badges}${draftLinks}</div>
+        <div class="badge-row">${regionBadge}${employmentBadge}${conversionBadge}${salaryBadge}${fitBadge}${companyBadge}${aiBadge}${matched}${badges}${draftLinks}</div>
         <a class="job-url" href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">${escapeHtml(job.url)}</a>
         ${options.ai && job.ai_match_notes ? `<p class="small-text">${escapeHtml(job.ai_match_notes)}</p>` : ""}
         ${compact ? "" : `<p class="small-text">${escapeHtml(notes || "")}</p>`}
@@ -302,7 +534,7 @@ function jobCard(job, compact = false, options = {}) {
       <div class="score">
         <span class="badge good">${scoreTone(score)}</span>
         <strong>${(options.fit ? rankScore : score).toFixed(1)}</strong>
-        <span class="small-text">/ 5.0</span>
+        <span class="small-text">${options.fit ? "排序分" : "/ 5.0"}</span>
       </div>
     </article>
   `;
@@ -315,7 +547,7 @@ function emptyState(text) {
 function renderMetrics() {
   const target = state.summary.recommendation_target || 20;
   document.getElementById("recommendedMetric").textContent = `${Math.min(state.summary.today_recommended || 0, target)}/${target}`;
-  document.getElementById("queueMetric").textContent = `${state.summary.apply_queue || 0}/${state.summary.daily_target || 15}`;
+  document.getElementById("queueMetric").textContent = state.summary.apply_queue || 0;
   document.getElementById("appliedMetric").textContent = state.summary.today_applied || 0;
   document.getElementById("totalMetric").textContent = state.summary.total || 0;
 }
@@ -328,7 +560,9 @@ function scanRunSummary(run) {
 
 function renderScanRun(payload = {}) {
   const run = payload.run || state.daily.latest_run;
-  const expected = payload.expected_sources || state.scan.expected_sources || ["LinkedIn", "LinkedIn AI", "InternSG", "InternSG AI", "Indeed", "Indeed AI", "JobStreet", "JobStreet AI", "Company Site"];
+  const expectedDetails = payload.expected_source_details || state.scan.expected_source_details || [];
+  const expected = payload.expected_sources || state.scan.expected_sources || expectedDetails.map((item) => item.source) || ["LinkedIn（含 AI 关键词）", "InternSG（含 AI 关键词）", "Indeed", "JobStreet", "公司官网"];
+  const sourceModes = new Map(expectedDetails.map((item) => [scanSourceLabel(item.source), item.mode]));
   const status = document.getElementById("scanStatus");
   const pill = document.getElementById("scanStatusPill");
   const progress = document.getElementById("scanProgress");
@@ -346,17 +580,27 @@ function renderScanRun(payload = {}) {
     setButtonState(scanBtn, "idle");
   }
 
-  const rowsBySource = new Map((run?.sources || []).map((item) => [item.source, item]));
-  const sourceRows = expected.map((source) => {
-    const row = rowsBySource.get(source) || { status: "pending", scanned_count: 0, saved_count: 0, failure_count: 0 };
-    return {
-      source,
-      row,
-      label: SCAN_STATUS_ZH[row.status] || row.status,
-    };
+  const aggregate = new Map();
+  expected.map((item) => typeof item === "string" ? scanSourceLabel(item) : scanSourceLabel(item.source)).forEach((source) => {
+    aggregate.set(source, { source, status: "pending", mode: sourceModes.get(source) || "primary", scanned_count: 0, saved_count: 0, failure_count: 0 });
   });
-  const shouldExpandSources = ["running", "partial", "failed"].includes(runStatus);
-  const problemRows = sourceRows.filter(({ row }) => row.status === "failed" || row.status === "partial" || Number(row.failure_count || 0) > 0);
+  (run?.sources || []).forEach((item) => {
+    const source = scanSourceLabel(item.source);
+    const existing = aggregate.get(source) || { source, status: "pending", mode: item.mode || sourceModes.get(source) || "primary", scanned_count: 0, saved_count: 0, failure_count: 0 };
+    existing.status = mergeScanStatus(existing.status, item.status || "pending");
+    existing.mode = item.mode || existing.mode;
+    existing.scanned_count += Number(item.scanned_count || 0);
+    existing.saved_count += Number(item.saved_count || 0);
+    existing.failure_count += Number(item.failure_count || 0);
+    aggregate.set(source, existing);
+  });
+  const sourceRows = Array.from(aggregate.values()).map((row) => ({
+    source: row.source,
+    row,
+    label: SCAN_STATUS_ZH[row.status] || row.status,
+  }));
+  const shouldExpandSources = ["running", "partial", "limited", "failed"].includes(runStatus);
+  const problemRows = sourceRows.filter(({ row }) => ["failed", "partial", "limited"].includes(row.status) || Number(row.failure_count || 0) > 0);
   const visibleRows = shouldExpandSources ? sourceRows : problemRows;
   progress.className = `source-progress ${shouldExpandSources ? "is-expanded" : "is-compact"}`;
   progress.innerHTML = visibleRows.length ? visibleRows.map(({ source, row, label }) => `
@@ -364,7 +608,7 @@ function renderScanRun(payload = {}) {
         <span class="source-dot" aria-hidden="true"></span>
         <div>
           <strong>${escapeHtml(source)}</strong>
-          <span>${row.scanned_count || 0} 抓到 · ${row.saved_count || 0} 保存 · ${row.failure_count || 0} 失败</span>
+          <span>${escapeHtml(scanModeLabel(row.mode))} · ${row.scanned_count || 0} 抓到 · ${row.saved_count || 0} 保存 · ${row.failure_count || 0} 失败</span>
         </div>
         <span class="status-pill ${row.status}">${escapeHtml(label)}</span>
       </div>
@@ -469,11 +713,11 @@ function renderRecommendationContext() {
   const source = state.recommendations.direction_source;
   const count = state.recommendations.active_direction_ids?.length || 0;
   if (source === "user_context") {
-    document.getElementById("recommendationContext").textContent = `正在按当前求职画像里的 ${count} 个方向重排；关注公司只影响排序，不覆盖硬规则。`;
+    document.getElementById("recommendationContext").textContent = `正在按画像里的 ${count} 个方向、地区、工作类型和薪资偏好重排；薪资不匹配只降权不隐藏。`;
     return;
   }
   const text = source === "user_selected"
-    ? `正在按你选择的 ${count} 个方向重排；基础 5.0 评分和身份限制仍然优先。`
+    ? `正在按你选择的 ${count} 个方向重排；工作类型、薪资和可转正只做软排序。`
     : source === "resume_analysis"
       ? `还没有手动选择方向，系统暂时按简历分析出的 ${count} 个方向重排。`
       : "还没有职业定位偏好，当前按基础 5.0 评分排序。";
@@ -492,9 +736,9 @@ function renderJobs() {
   document.querySelectorAll("[data-recommendation-view]").forEach((button) => {
     button.classList.toggle("active", button.dataset.recommendationView === state.recommendationView);
   });
-  document.getElementById("fitJobCount").textContent = `${fitJobs.length}/20`;
-  document.getElementById("aiJobCount").textContent = `${aiJobs.length}/20`;
-  document.getElementById("generalJobCount").textContent = `${generalJobs.length}/20`;
+  document.getElementById("fitJobCount").textContent = fitJobs.length;
+  document.getElementById("aiJobCount").textContent = aiJobs.length;
+  document.getElementById("generalJobCount").textContent = generalJobs.length;
   renderRecommendationContext();
 
   const fitList = document.getElementById("fitJobList");
@@ -511,7 +755,7 @@ function renderJobs() {
   document.getElementById("queueList").innerHTML = queue.length
     ? queue.slice(0, 15).map((job) => jobCard(job, true)).join("")
     : emptyState("投递队列为空。你可以从今日推荐里选择“加入投递”。");
-  document.getElementById("queueMiniCount").textContent = `${queue.length}/${state.summary.daily_target || 15}`;
+  document.getElementById("queueMiniCount").textContent = queue.length;
   document.getElementById("queueMiniList").innerHTML = queue.length
     ? queue.slice(0, 5).map((job) => `<div class="mini-item"><strong>${escapeHtml(job.company)}</strong><span class="small-text">${escapeHtml(job.position)}</span></div>`).join("")
     : `<div class="mini-item"><span class="small-text">还没有待投递岗位。</span></div>`;
@@ -622,7 +866,10 @@ function renderWatchlist() {
         <span class="badge-row">
           <span class="badge">${escapeHtml(company.company_type || "Company")}</span>
           <span class="badge">${escapeHtml((company.city_tags || []).join(", "))}</span>
+          ${(company.tags || []).slice(0, 2).map((tag) => `<span class="badge fit-badge">${escapeHtml(tag)}</span>`).join("")}
+          ${company.language_signal ? `<span class="badge salary-badge">${escapeHtml(company.language_signal)}</span>` : ""}
         </span>
+        ${company.recommend_reason ? `<p class="company-reason">${escapeHtml(company.recommend_reason)}</p>` : ""}
         <span class="job-url">${escapeHtml(company.url)}</span>
       </div>
       <button class="secondary-button compact-button" data-watch-action="add-catalog" data-company="${escapeHtml(company.company)}">关注</button>
@@ -679,6 +926,7 @@ async function refresh() {
   state.userContext = userContext;
   const region = activeRegion();
   const regionParam = `region=${encodeURIComponent(region)}`;
+  state.profileOptions = await api(`/api/profile-options?${regionParam}`);
   const [summary, jobs, aiJobs, watchlist, daily, profile, careerFit, recommendations, scanStatus, companyCatalog] = await Promise.all([
     api("/api/summary"),
     api(`/api/jobs?${regionParam}`),
@@ -775,6 +1023,7 @@ async function submitUserContext(event) {
   event.preventDefault();
   const button = event.submitter;
   const form = event.currentTarget;
+  syncContextCustomInputs(form);
   const payload = Object.fromEntries(new FormData(form).entries());
   const active_region = payload.active_region || activeRegion();
   const target_directions = splitList(payload.target_directions);
@@ -788,6 +1037,53 @@ async function submitUserContext(event) {
           work_authorisation: payload.work_authorisation,
           target_directions,
           job_types: splitList(payload.job_types),
+          employment_priority: payload.employment_priority,
+          salary_currency: state.profileOptions.salary_currency || payload.salary_currency,
+          salary_period: payload.salary_period,
+          salary_min: payload.salary_min,
+          salary_preferred: payload.salary_preferred,
+        },
+        onboarding_completed: true,
+      }),
+    });
+    if (target_directions.length) {
+      await api("/api/career-fit/preferences", {
+        method: "PUT",
+        body: JSON.stringify({ selected_directions: target_directions }),
+      });
+    }
+    state.dailyRunChecked = false;
+    await refreshFocusData("求职画像已更新，今日推荐已重排。");
+  }, "已保存");
+}
+
+async function submitOnboarding(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const form = event.currentTarget;
+  syncOnboardingCustomInputs(form);
+  const payload = Object.fromEntries(new FormData(form).entries());
+  const active_region = payload.active_region || activeRegion();
+  const target_directions = splitList(payload.target_directions);
+  const status = document.getElementById("onboardingStatus");
+  await withButton(button, "保存中...", async () => {
+    const fileInput = document.getElementById("onboardingResumeInput");
+    if (fileInput?.files?.length) {
+      const resumeData = new FormData();
+      resumeData.append("resume", fileInput.files[0]);
+      await api("/api/resumes", { method: "POST", body: resumeData });
+    }
+    state.userContext = await api("/api/user-context", {
+      method: "PUT",
+      body: JSON.stringify({
+        active_region,
+        context: {
+          target_directions,
+          employment_priority: payload.employment_priority,
+          salary_currency: state.profileOptions.salary_currency,
+          salary_period: payload.salary_period,
+          salary_min: payload.salary_min,
+          salary_preferred: payload.salary_preferred,
         },
         onboarding_completed: true,
       }),
@@ -800,8 +1096,66 @@ async function submitUserContext(event) {
     }
     state.dailyRunChecked = false;
     await refresh();
-    toast("求职画像已更新。", "success");
+    status.textContent = "设置已保存。";
+    toast("首次设置已保存。", "success");
   }, "已保存");
+}
+
+async function skipOnboarding(event) {
+  const button = event.currentTarget;
+  const form = document.getElementById("onboardingForm");
+  const active_region = form?.elements.active_region.value || activeRegion();
+  await withButton(button, "跳过中...", async () => {
+    state.userContext = await api("/api/user-context", {
+      method: "PUT",
+      body: JSON.stringify({ active_region, onboarding_completed: true }),
+    });
+    await refresh();
+    toast("已跳过首次设置，之后可在资料页修改。", "success");
+  }, "已跳过");
+}
+
+async function refreshFocusData(message = "推荐已按新画像重排。") {
+  const regionParam = regionQuery();
+  const target = document.getElementById("jobFocusPanel");
+  target?.classList.add("is-updating");
+  document.querySelector(".recommendation-switch-head")?.classList.add("is-updating");
+  try {
+    const [summary, jobs, aiJobs, recommendations, scanStatus, watchlist, companyCatalog] = await Promise.all([
+      api("/api/summary"),
+      api(`/api/jobs?${regionParam}`),
+      api(`/api/jobs/ai?limit=20&${regionParam}`),
+      api(`/api/recommendations/today?limit=20&${regionParam}`),
+      api(`/api/scan/status?${regionParam}`),
+      api(`/api/watchlist?${regionParam}`),
+      api(`/api/company-catalog?${regionParam}`),
+    ]);
+    state.summary = summary;
+    state.jobs = jobs;
+    state.aiJobs = aiJobs;
+    state.recommendations = recommendations;
+    state.scan = scanStatus;
+    state.watchlist = watchlist;
+    state.companyCatalog = companyCatalog;
+    renderUserContextControls();
+    renderMetrics();
+    renderScanRun(scanStatus);
+    renderJobs();
+    renderWatchlist();
+    toast(message, "success");
+  } finally {
+    window.setTimeout(() => {
+      target?.classList.remove("is-updating");
+      document.querySelector(".recommendation-switch-head")?.classList.remove("is-updating");
+    }, 360);
+  }
+}
+
+function scheduleFocusRefresh(message) {
+  if (state.focusRefreshTimer) window.clearTimeout(state.focusRefreshTimer);
+  state.focusRefreshTimer = window.setTimeout(() => {
+    refreshFocusData(message).catch((error) => toast(error.message, "error"));
+  }, 280);
 }
 
 async function changeRegion(region) {
@@ -812,6 +1166,24 @@ async function changeRegion(region) {
   state.selectedCompany = "";
   state.dailyRunChecked = false;
   await refresh();
+}
+
+async function quickUpdateEmploymentPriority(priority) {
+  const context = activeRegionContext();
+  context.employment_priority = priority;
+  renderUserContextControls();
+  state.userContext = await api("/api/user-context", {
+    method: "PUT",
+    body: JSON.stringify({
+      active_region: activeRegion(),
+      context: {
+        employment_priority: priority,
+        salary_currency: context.salary_currency || state.profileOptions.salary_currency,
+      },
+      onboarding_completed: true,
+    }),
+  });
+  scheduleFocusRefresh(`已切换为「${optionLabel(state.profileOptions.employment_priority_options, priority)}」，岗位正在重排。`);
 }
 
 function catalogCompany(companyName) {
@@ -902,7 +1274,7 @@ async function toggleDirection(directionId) {
     body: JSON.stringify({ selected_directions: Array.from(selected) }),
   });
   state.careerFit = result.career_fit;
-  state.recommendations = await api("/api/recommendations/today?limit=20");
+  state.recommendations = await api(`/api/recommendations/today?limit=20&${regionQuery()}`);
   renderCareerFit();
   renderJobs();
   toast("今日推荐排序已更新。", "success");
@@ -1052,14 +1424,50 @@ function showView(view) {
   document.getElementById(`${view}View`).classList.add("active");
 }
 
+function handleOptionChip(event) {
+  const button = event.target.closest("[data-option-target]");
+  if (!button) return;
+  const [scope, field] = button.dataset.optionTarget.split(":");
+  const value = button.dataset.optionValue;
+  const multi = button.dataset.optionMulti !== "false";
+  if (scope === "focus" && field === "employment_priority") {
+    quickUpdateEmploymentPriority(value).catch((error) => toast(error.message, "error"));
+    return;
+  }
+  const form = document.getElementById(scope === "onboarding" ? "onboardingForm" : "contextForm");
+  if (!form?.elements?.[field]) return;
+  const next = toggleValue(selectedValuesFromHidden(form, field), value, multi);
+  setHiddenList(form, field, next);
+  const context = activeRegionContext();
+  context[field] = multi ? next : (next[0] || "");
+  renderUserContextControls();
+}
+
+function syncSalaryPeriodControls(scope) {
+  const form = document.getElementById(scope === "onboarding" ? "onboardingForm" : "contextForm");
+  const periodSelect = document.getElementById(scope === "onboarding" ? "onboardingSalaryPeriod" : "contextSalaryPeriod");
+  const minSelect = document.getElementById(scope === "onboarding" ? "onboardingSalaryMin" : "contextSalaryMin");
+  const preferredSelect = document.getElementById(scope === "onboarding" ? "onboardingSalaryPreferred" : "contextSalaryPreferred");
+  if (!form || !periodSelect) return;
+  const context = activeRegionContext();
+  const salaryBands = salaryBandsForPeriod(periodSelect.value || "monthly");
+  setSelectOptions(minSelect, salaryBands, form.elements.salary_min?.value ?? context.salary_min ?? "");
+  setSelectOptions(preferredSelect, salaryBands, form.elements.salary_preferred?.value ?? context.salary_preferred ?? "");
+}
+
 function bindEvents() {
   document.getElementById("jobForm").addEventListener("submit", submitJob);
   document.getElementById("profileForm").addEventListener("submit", submitProfile);
   document.getElementById("contextForm").addEventListener("submit", submitUserContext);
+  document.getElementById("onboardingForm").addEventListener("submit", submitOnboarding);
+  document.getElementById("skipOnboardingBtn").addEventListener("click", skipOnboarding);
   document.getElementById("companyAddForm").addEventListener("submit", submitCompany);
   document.getElementById("resumeUploadForm").addEventListener("submit", uploadResume);
-  document.getElementById("regionSelect").addEventListener("change", (event) => changeRegion(event.target.value));
+  document.getElementById("focusRegion").addEventListener("change", (event) => changeRegion(event.target.value));
   document.getElementById("contextRegion").addEventListener("change", (event) => changeRegion(event.target.value));
+  document.getElementById("onboardingRegion").addEventListener("change", (event) => changeRegion(event.target.value));
+  document.getElementById("contextSalaryPeriod").addEventListener("change", () => syncSalaryPeriodControls("context"));
+  document.getElementById("onboardingSalaryPeriod").addEventListener("change", () => syncSalaryPeriodControls("onboarding"));
   document.getElementById("scanBtn").addEventListener("click", scanJobs);
   document.getElementById("reportBtn").addEventListener("click", makeReport);
   document.getElementById("notionSyncBtn").addEventListener("click", syncNotion);
@@ -1069,6 +1477,7 @@ function bindEvents() {
   document.body.addEventListener("click", handleJobAction);
   document.body.addEventListener("click", handleOpenPath);
   document.body.addEventListener("click", handleWatchAction);
+  document.body.addEventListener("click", handleOptionChip);
   document.body.addEventListener("click", (event) => {
     if (event.target.closest("[data-nav-fit]")) showView("fit");
     const chip = event.target.closest("[data-direction-id]");
