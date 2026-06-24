@@ -201,8 +201,11 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(sg_options["salary_currency"], "SGD")
         self.assertEqual(cn_options["salary_currency"], "CNY")
         self.assertEqual(hk_options["salary_currency"], "HKD")
+        self.assertFalse(sg_options["city_required"])
+        self.assertTrue(cn_options["city_required"])
         self.assertIn("Student Pass", [item["value"] for item in sg_options["work_authorisation_options"]])
         self.assertIn("ai-product", [item["value"] for item in sg_options["direction_options"]])
+        self.assertIn("AI 与产品", [item["category"] for item in sg_options["direction_options"]])
         self.assertIn("monthly", sg_options["salary_band_options"])
 
     def test_singapore_company_catalog_has_new_radar_fields(self):
@@ -298,6 +301,14 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
         self.assertGreater(boosted["company_boost"], 0)
         self.assertEqual(boosted["region_fit"], 1.0)
 
+    def test_company_catalog_marks_current_city_match(self):
+        server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
+        catalog = server.company_catalog("CN", "Shanghai")
+        shanghai_companies = [item for item in catalog if "Shanghai" in item.get("city_tags", [])]
+
+        self.assertTrue(shanghai_companies)
+        self.assertTrue(all(item["city_match"] for item in shanghai_companies[:2]))
+
 
 class CareerFitTests(TempAppMixin, unittest.TestCase):
     def sample_resume_text(self) -> str:
@@ -330,6 +341,9 @@ class CareerFitTests(TempAppMixin, unittest.TestCase):
         md = server.save_uploaded_resume("yan-resume.md", self.sample_resume_text().encode("utf-8"), "text/markdown")
         self.assertIn("AI Product", [item["label"] for item in md["analysis"]["directions"][:3]])
         self.assertTrue(Path(md["resume"]["text_path"]).exists())
+        user_context = server.load_user_context()
+        self.assertTrue(user_context["resume_analyzed"])
+        self.assertEqual(user_context["onboarding_step"], 3)
 
         pdf = server.save_uploaded_resume("yan-resume.pdf", self.pdf_bytes(self.sample_resume_text()), "application/pdf")
         self.assertEqual(pdf["resume"]["original_filename"], "yan-resume.pdf")

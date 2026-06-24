@@ -25,6 +25,9 @@ const state = {
   scan: {},
   scanPollTimer: null,
   focusRefreshTimer: null,
+  onboardingStep: 1,
+  companyTab: "watched",
+  showAllCompanyRecommendations: false,
   dailyRunChecked: false,
 };
 
@@ -203,8 +206,16 @@ function activeRegionContext() {
   return state.userContext?.contexts?.[activeRegion()] || {};
 }
 
+function activeCity() {
+  const config = activeRegionConfig();
+  const context = activeRegionContext();
+  return context.city || config.default_city || "";
+}
+
 function regionQuery() {
-  return `region=${encodeURIComponent(activeRegion())}`;
+  const params = new URLSearchParams({ region: activeRegion() });
+  if (activeCity()) params.set("city", activeCity());
+  return params.toString();
 }
 
 function splitList(value) {
@@ -273,6 +284,37 @@ function renderOptionButtons(containerId, options, selectedValues, config = {}) 
     .join("");
 }
 
+function renderGroupedOptionButtons(containerId, options, selectedValues, config = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const groups = new Map();
+  (options || []).forEach((item) => {
+    const category = item.category || "其他方向";
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(item);
+  });
+  container.innerHTML = Array.from(groups.entries()).map(([category, items]) => `
+    <div class="option-group">
+      <div class="option-group-title">${escapeHtml(category)}</div>
+      <div class="option-chip-row">
+        ${items.map((item) => {
+          const selected = new Set(selectedValues || []);
+          const multi = config.multi !== false;
+          return `
+            <button
+              type="button"
+              class="option-chip ${selected.has(item.value) ? "active" : ""}"
+              data-option-target="${escapeHtml(config.target || "")}"
+              data-option-value="${escapeHtml(item.value)}"
+              data-option-multi="${multi ? "true" : "false"}"
+            >${escapeHtml(item.label)}</button>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `).join("");
+}
+
 function salaryPreferenceLabel(context) {
   const currency = context.salary_currency || state.profileOptions.salary_currency || "";
   const period = periodLabel(context.salary_period || "monthly");
@@ -301,6 +343,17 @@ function syncOnboardingCustomInputs(form) {
   const selectedDirections = selectedValuesFromHidden(form, "target_directions").filter((item) => directionValues.has(item));
   const customDirections = splitList(document.getElementById("onboardingCustomDirections")?.value || "");
   setHiddenList(form, "target_directions", [...selectedDirections, ...customDirections]);
+}
+
+function resumeAnalyzed() {
+  return Boolean(state.userContext?.resume_analyzed || state.careerFit?.resume_analyzed || state.careerFit?.analysis);
+}
+
+function suggestedDirectionIds(limit = 3) {
+  return (state.careerFit?.suggested_directions || [])
+    .filter((item) => item.id && Number(item.score || 0) > 0)
+    .slice(0, limit)
+    .map((item) => item.id);
 }
 
 function formatDateTime(value) {
@@ -385,17 +438,32 @@ function renderUserContextControls() {
     .map((region) => `<option value="${escapeHtml(region.code)}" ${region.code === activeRegion() ? "selected" : ""}>${escapeHtml(region.label)}</option>`)
     .join("");
   const focusRegion = document.getElementById("focusRegion");
+  const focusCity = document.getElementById("focusCity");
   const contextRegion = document.getElementById("contextRegion");
   const onboardingRegion = document.getElementById("onboardingRegion");
   if (focusRegion) focusRegion.innerHTML = options;
   if (contextRegion) contextRegion.innerHTML = options;
   if (onboardingRegion) onboardingRegion.innerHTML = options;
+  if (focusRegion) focusRegion.value = activeRegion();
+  if (contextRegion) contextRegion.value = activeRegion();
+  if (onboardingRegion) onboardingRegion.value = activeRegion();
 
   const cityOptions = (config.cities || [config.default_city || "Singapore"])
     .map((city) => `<option value="${escapeHtml(city)}" ${city === (context.city || config.default_city) ? "selected" : ""}>${escapeHtml(city)}</option>`)
     .join("");
   const citySelect = document.getElementById("contextCity");
   if (citySelect) citySelect.innerHTML = cityOptions;
+  if (focusCity) focusCity.innerHTML = cityOptions;
+  const onboardingCity = document.getElementById("onboardingCity");
+  if (onboardingCity) onboardingCity.innerHTML = cityOptions;
+  const cityHiddenValue = context.city || config.default_city || "";
+  if (focusCity) focusCity.value = cityHiddenValue;
+  if (onboardingCity) onboardingCity.value = cityHiddenValue;
+  const focusCityField = document.getElementById("focusCityField");
+  const onboardingCityField = document.getElementById("onboardingCityField");
+  const showCityPicker = Boolean(state.profileOptions.city_required || (config.cities || []).length > 1);
+  if (focusCityField) focusCityField.hidden = !showCityPicker;
+  if (onboardingCityField) onboardingCityField.hidden = !showCityPicker;
 
   const form = document.getElementById("contextForm");
   if (form) {
@@ -434,14 +502,16 @@ function renderFocusPanel() {
   const context = activeRegionContext();
   const priority = context.employment_priority || "both";
   const priorityLabel = optionLabel(state.profileOptions.employment_priority_options, priority) || "都考虑";
-  document.getElementById("focusTitle").textContent = `${config.label || activeRegion()} · ${priorityLabel}`;
-  document.getElementById("focusSummary").textContent = `${context.city || config.default_city || ""} · ${salaryPreferenceLabel(context)} · 关注公司 ${state.watchlist.length || 0} 家`;
+  const city = context.city || config.default_city || "";
+  document.getElementById("focusTitle").textContent = `${config.label || activeRegion()}${city ? " · " + city : ""}`;
+  document.getElementById("focusSummary").textContent = `${priorityLabel} · ${salaryPreferenceLabel(context)} · 简历${resumeAnalyzed() ? "已分析" : "待分析"} · 关注公司 ${state.watchlist.length || 0} 家`;
   renderOptionButtons("focusPriorityQuick", state.profileOptions.employment_priority_options || [], [priority], { target: "focus:employment_priority", multi: false });
   const directionOptions = state.profileOptions.direction_options || [];
   const directionLabels = (context.target_directions || []).slice(0, 4).map((id) => optionLabel(directionOptions, id) || id);
   const jobTypes = (context.job_types || []).slice(0, 3);
   const tags = [
-    context.city || config.default_city || "",
+    priorityLabel,
+    city,
     ...directionLabels,
     ...jobTypes,
   ].filter(Boolean);
@@ -454,22 +524,54 @@ function renderOnboarding() {
   const panel = document.getElementById("onboardingPanel");
   const form = document.getElementById("onboardingForm");
   if (!panel || !form) return;
+  const config = activeRegionConfig();
   const context = activeRegionContext();
   panel.hidden = Boolean(state.userContext?.onboarding_completed);
+  const analyzed = resumeAnalyzed();
+  const savedStep = Number(state.userContext?.onboarding_step || 1);
+  if (!state.onboardingStep || state.onboardingStep < savedStep) state.onboardingStep = savedStep;
+  if (analyzed && state.onboardingStep < 3) state.onboardingStep = 3;
+  if (!analyzed && state.onboardingStep > 2) state.onboardingStep = 2;
+  state.onboardingStep = Math.max(1, Math.min(3, state.onboardingStep));
+
   form.elements.active_region.value = activeRegion();
+  form.elements.city.value = context.city || config.default_city || "";
   form.elements.employment_priority.value = context.employment_priority || "both";
   form.elements.target_directions.value = (context.target_directions || []).join(", ");
+  form.elements.job_types.value = (context.job_types || []).join(", ");
+  form.elements.work_authorisation.value = context.work_authorisation || "";
   const directionValues = new Set((state.profileOptions.direction_options || []).map((item) => item.value));
   const customDirectionInput = document.getElementById("onboardingCustomDirections");
   if (customDirectionInput) {
     customDirectionInput.value = (context.target_directions || []).filter((item) => !directionValues.has(item)).join(", ");
   }
+  document.querySelectorAll("[data-onboarding-step]").forEach((step) => {
+    step.classList.toggle("active", Number(step.dataset.onboardingStep) === state.onboardingStep);
+  });
+  document.querySelectorAll("[data-step-dot]").forEach((dot) => {
+    const step = Number(dot.dataset.stepDot);
+    dot.classList.toggle("active", step === state.onboardingStep);
+    dot.classList.toggle("done", step < state.onboardingStep);
+  });
   renderOptionButtons("onboardingPriorityOptions", state.profileOptions.employment_priority_options || [], [context.employment_priority || "both"], { target: "onboarding:employment_priority", multi: false });
-  renderOptionButtons("onboardingDirectionOptions", state.profileOptions.direction_options || [], context.target_directions || [], { target: "onboarding:target_directions" });
+  renderGroupedOptionButtons("onboardingDirectionOptions", state.profileOptions.direction_options || [], context.target_directions || [], { target: "onboarding:target_directions" });
+  renderOptionButtons("onboardingJobTypeOptions", state.profileOptions.job_type_options || [], context.job_types || [], { target: "onboarding:job_types" });
+  renderOptionButtons("onboardingWorkAuthOptions", state.profileOptions.work_authorisation_options || [], [context.work_authorisation || ""], { target: "onboarding:work_authorisation", multi: false });
   setSelectOptions(document.getElementById("onboardingSalaryPeriod"), state.profileOptions.salary_period_options || [], context.salary_period || "monthly");
   const salaryBands = salaryBandsForPeriod(context.salary_period || "monthly");
   setSelectOptions(document.getElementById("onboardingSalaryMin"), salaryBands, context.salary_min ?? "");
   setSelectOptions(document.getElementById("onboardingSalaryPreferred"), salaryBands, context.salary_preferred ?? "");
+  const preview = document.getElementById("onboardingAnalysisPreview");
+  if (preview) {
+    const labels = (state.careerFit?.suggested_directions || []).slice(0, 3).map((item) => item.label);
+    preview.innerHTML = analyzed
+      ? `<strong>已完成简历分析</strong><p class="small-text">${escapeHtml(state.careerFit?.analysis?.summary || "可以继续确认求职偏好。")}</p><div class="chip-row">${labels.map((label) => `<span class="chip-label active">${escapeHtml(label)}</span>`).join("")}</div>`
+      : `<span class="small-text">还没有简历分析结果。请选择文件后点击“分析简历”。</span>`;
+  }
+  const locationStatus = document.getElementById("onboardingLocationStatus");
+  if (locationStatus) {
+    locationStatus.textContent = state.profileOptions.city_required ? "中国大陆会按城市搜索相关岗位。" : "当前地区已准备好。";
+  }
 }
 
 function jobCard(job, compact = false, options = {}) {
@@ -823,59 +925,124 @@ function jobsForCompany(company) {
     .slice(0, 20);
 }
 
+function companyByName(companyName) {
+  return [...(state.watchlist || []), ...(state.companyCatalog || [])].find((item) => item.company === companyName);
+}
+
+function companyRow(company, config = {}) {
+  const watched = Boolean(config.watched || company.watched);
+  const tags = [
+    company.region || activeRegion(),
+    company.company_type || company.source,
+    ...(company.tags || []).slice(0, 2),
+    company.language_signal || "",
+  ].filter(Boolean);
+  const jobs = jobsForCompany(company.company);
+  return `
+    <article class="company-row ${state.selectedCompany === company.company ? "active" : ""}" data-company="${escapeHtml(company.company)}">
+      <button class="company-select" type="button" data-company="${escapeHtml(company.company)}">
+        <span class="company-row-main">
+          <strong>${escapeHtml(company.company)}</strong>
+          <span>${escapeHtml(company.focus || "关注官网岗位")}</span>
+        </span>
+        <span class="company-row-meta">
+          ${tags.slice(0, 3).map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join("")}
+          <span class="badge fit-badge">${jobs.length} 岗位</span>
+        </span>
+      </button>
+      <div class="company-row-actions">
+        <a class="tertiary-button compact-button" href="${escapeHtml(company.url)}" target="_blank" rel="noreferrer">官网</a>
+        ${watched
+          ? `<button class="tertiary-button compact-button" data-watch-action="remove" data-watch-id="${company.id}">取消</button>`
+          : `<button class="secondary-button compact-button" data-watch-action="add-catalog" data-company="${escapeHtml(company.company)}">关注</button>`}
+      </div>
+    </article>
+  `;
+}
+
 function renderCompanyJobs() {
   const title = document.getElementById("companyJobsTitle");
   const container = document.getElementById("companyJobs");
+  const detail = document.getElementById("companyDetailCard");
+  const detailText = document.getElementById("companyDetailText");
+  const actions = document.getElementById("companyDetailActions");
   if (!state.selectedCompany) {
     title.textContent = "选择一家公司查看岗位";
+    if (detailText) detailText.textContent = "点击左侧公司后，这里会立即显示公司信息和相关岗位。";
+    if (detail) detail.innerHTML = "";
+    if (actions) actions.innerHTML = "";
     container.innerHTML = emptyState("点击上方公司卡片后，这里会显示该公司相关岗位。");
     return;
   }
+  const company = companyByName(state.selectedCompany) || {};
+  const isWatched = (state.watchlist || []).some((item) => item.company === state.selectedCompany);
   const jobs = jobsForCompany(state.selectedCompany);
   title.textContent = `${state.selectedCompany} 相关岗位`;
+  if (detailText) detailText.textContent = `${jobs.length} 个本地已记录岗位 · ${isWatched ? "已关注，会进入官网浅扫描" : "推荐关注，可加入雷达"}`;
+  if (detail) {
+    const badges = [
+      company.company_type || company.source,
+      ...(company.city_tags || []),
+      ...(company.tags || []),
+      company.language_signal || "",
+    ].filter(Boolean).slice(0, 6);
+    detail.innerHTML = `
+      <div>
+        <h3>${escapeHtml(company.company || state.selectedCompany)}</h3>
+        <p>${escapeHtml(company.focus || "暂无方向说明。")}</p>
+        <div class="badge-row">${badges.map((tag) => `<span class="badge ${String(tag).includes("AI") || String(tag).includes("产品") ? "fit-badge" : ""}">${escapeHtml(tag)}</span>`).join("")}</div>
+        ${company.recommend_reason ? `<p class="company-reason">${escapeHtml(company.recommend_reason)}</p>` : ""}
+      </div>
+    `;
+  }
+  if (actions) {
+    actions.innerHTML = `
+      ${company.url ? `<a class="secondary-button compact-button" href="${escapeHtml(company.url)}" target="_blank" rel="noreferrer">岗位入口</a>` : ""}
+      ${isWatched
+        ? ""
+        : `<button class="primary-button compact-button" data-watch-action="add-catalog" data-company="${escapeHtml(company.company || state.selectedCompany)}">关注</button>`}
+    `;
+  }
   container.innerHTML = jobs.length ? jobs.map((job) => jobCard(job)).join("") : emptyState("暂时没有抓到这家公司可展示岗位。");
 }
 
 function renderWatchlist() {
   const watched = document.getElementById("companyList");
   const catalog = document.getElementById("companyCatalog");
-  watched.innerHTML = state.watchlist.length ? state.watchlist.map((company) => `
-    <article class="company-item ${state.selectedCompany === company.company ? "active" : ""}" data-company="${escapeHtml(company.company)}">
-      <button class="company-select" data-company="${escapeHtml(company.company)}">
-        <span>
-          <h3>${escapeHtml(company.company)}</h3>
-          <p class="small-text">${escapeHtml(company.focus)}</p>
-          <span class="badge-row">
-            <span class="badge">${escapeHtml(company.region || activeRegion())}</span>
-            <span class="badge">${escapeHtml(company.company_type || company.source)}</span>
-            <span class="badge">${escapeHtml(company.source)}</span>
-          </span>
-          <span class="job-url">${escapeHtml(company.url)}</span>
-        </span>
-      </button>
-      <button class="tertiary-button compact-button" data-watch-action="remove" data-watch-id="${company.id}">取消关注</button>
-    </article>
-  `).join("") : emptyState("还没有关注公司。可以从右侧推荐里选择，或粘贴官网招聘链接。");
-
+  if (!watched || !catalog) return;
   const recommended = (state.companyCatalog || []).filter((company) => !company.watched);
-  catalog.innerHTML = recommended.length ? recommended.map((company) => `
-    <article class="company-item catalog-item">
-      <div>
-        <h3>${escapeHtml(company.company)}</h3>
-        <p class="small-text">${escapeHtml(company.focus)}</p>
-        <span class="badge-row">
-          <span class="badge">${escapeHtml(company.company_type || "Company")}</span>
-          <span class="badge">${escapeHtml((company.city_tags || []).join(", "))}</span>
-          ${(company.tags || []).slice(0, 2).map((tag) => `<span class="badge fit-badge">${escapeHtml(tag)}</span>`).join("")}
-          ${company.language_signal ? `<span class="badge salary-badge">${escapeHtml(company.language_signal)}</span>` : ""}
-        </span>
-        ${company.recommend_reason ? `<p class="company-reason">${escapeHtml(company.recommend_reason)}</p>` : ""}
-        <span class="job-url">${escapeHtml(company.url)}</span>
-      </div>
-      <button class="secondary-button compact-button" data-watch-action="add-catalog" data-company="${escapeHtml(company.company)}">关注</button>
-    </article>
-  `).join("") : emptyState("当前地区推荐公司都已关注。");
+  const allNames = new Set([...(state.watchlist || []), ...(state.companyCatalog || [])].map((item) => item.company));
+  if (state.selectedCompany && !allNames.has(state.selectedCompany)) state.selectedCompany = "";
+  if (!state.selectedCompany) {
+    state.selectedCompany = state.watchlist[0]?.company || recommended[0]?.company || "";
+  }
+  const visibleRecommended = state.showAllCompanyRecommendations ? recommended : recommended.slice(0, 6);
+  watched.hidden = state.companyTab !== "watched";
+  catalog.hidden = state.companyTab !== "recommended";
+  watched.innerHTML = state.watchlist.length ? state.watchlist.map((company) => companyRow(company, { watched: true })).join("") : emptyState("还没有关注公司。可以从推荐里选择，或粘贴官网招聘链接。");
+  catalog.innerHTML = visibleRecommended.length ? visibleRecommended.map((company) => companyRow(company)).join("") : emptyState("当前地区推荐公司都已关注。");
+  document.querySelectorAll("[data-company-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.companyTab === state.companyTab);
+  });
+  const moreBtn = document.getElementById("companyMoreBtn");
+  if (moreBtn) {
+    moreBtn.hidden = state.companyTab !== "recommended" || recommended.length <= 6;
+    moreBtn.textContent = state.showAllCompanyRecommendations ? "收起推荐" : `展开更多推荐（${recommended.length - 6}）`;
+  }
+  renderCompanyMiniList(recommended);
   renderCompanyJobs();
+}
+
+function renderCompanyMiniList(recommended = []) {
+  const mini = document.getElementById("companyMiniList");
+  if (!mini) return;
+  const top = recommended.slice(0, 3);
+  mini.innerHTML = top.length ? top.map((company) => `
+    <button class="mini-item mini-company-button" type="button" data-company-mini="${escapeHtml(company.company)}">
+      <strong>${escapeHtml(company.company)}</strong>
+      <span class="small-text">${escapeHtml(company.company_type || company.focus || "推荐关注")}</span>
+    </button>
+  `).join("") : `<div class="mini-item"><span class="small-text">当前重点公司都已关注。</span></div>`;
 }
 
 async function renderNotionSchema() {
@@ -1061,30 +1228,35 @@ async function submitOnboarding(event) {
   event.preventDefault();
   const button = event.submitter;
   const form = event.currentTarget;
+  if (!resumeAnalyzed()) {
+    toast("请先上传并分析简历，再保存首次设置。", "error");
+    state.onboardingStep = 2;
+    renderOnboarding();
+    return;
+  }
   syncOnboardingCustomInputs(form);
   const payload = Object.fromEntries(new FormData(form).entries());
   const active_region = payload.active_region || activeRegion();
   const target_directions = splitList(payload.target_directions);
   const status = document.getElementById("onboardingStatus");
   await withButton(button, "保存中...", async () => {
-    const fileInput = document.getElementById("onboardingResumeInput");
-    if (fileInput?.files?.length) {
-      const resumeData = new FormData();
-      resumeData.append("resume", fileInput.files[0]);
-      await api("/api/resumes", { method: "POST", body: resumeData });
-    }
     state.userContext = await api("/api/user-context", {
       method: "PUT",
       body: JSON.stringify({
         active_region,
         context: {
+          city: payload.city,
           target_directions,
+          job_types: splitList(payload.job_types),
+          work_authorisation: payload.work_authorisation,
           employment_priority: payload.employment_priority,
           salary_currency: state.profileOptions.salary_currency,
           salary_period: payload.salary_period,
           salary_min: payload.salary_min,
           salary_preferred: payload.salary_preferred,
         },
+        resume_analyzed: true,
+        onboarding_step: 3,
         onboarding_completed: true,
       }),
     });
@@ -1099,6 +1271,82 @@ async function submitOnboarding(event) {
     status.textContent = "设置已保存。";
     toast("首次设置已保存。", "success");
   }, "已保存");
+}
+
+async function advanceOnboardingLocation(event) {
+  const button = event.currentTarget;
+  const form = document.getElementById("onboardingForm");
+  const region = document.getElementById("onboardingRegion")?.value || activeRegion();
+  const city = document.getElementById("onboardingCity")?.value || "";
+  if (state.profileOptions.city_required && !city) {
+    document.getElementById("onboardingLocationStatus").textContent = "请先选择城市。";
+    toast("中国大陆岗位需要先选择城市。", "error");
+    return;
+  }
+  if (form) {
+    form.elements.active_region.value = region;
+    form.elements.city.value = city;
+  }
+  await withButton(button, "保存地区...", async () => {
+    state.userContext = await api("/api/user-context", {
+      method: "PUT",
+      body: JSON.stringify({
+        active_region: region,
+        context: {
+          city,
+          salary_currency: state.profileOptions.salary_currency,
+        },
+        onboarding_step: 2,
+      }),
+    });
+    state.onboardingStep = 2;
+    state.dailyRunChecked = false;
+    renderUserContextControls();
+  }, "已保存");
+}
+
+async function analyzeOnboardingResume(event) {
+  const button = event.currentTarget;
+  const fileInput = document.getElementById("onboardingResumeInput");
+  const status = document.getElementById("onboardingAnalyzeStatus");
+  if (!fileInput?.files?.length) {
+    status.textContent = "请选择 PDF、DOCX、MD 或 TXT 简历。";
+    toast("请先选择简历文件。", "error");
+    return;
+  }
+  await withButton(button, "分析中...", async () => {
+    const resumeData = new FormData();
+    resumeData.append("resume", fileInput.files[0]);
+    await api("/api/resumes", { method: "POST", body: resumeData });
+    state.careerFit = await api("/api/career-fit");
+    const context = activeRegionContext();
+    const suggested = suggestedDirectionIds();
+    const nextDirections = suggested.length ? suggested : (context.target_directions || []);
+    state.userContext = await api("/api/user-context", {
+      method: "PUT",
+      body: JSON.stringify({
+        active_region: activeRegion(),
+        context: {
+          city: activeCity(),
+          target_directions: nextDirections,
+          job_types: context.job_types || ["Internship", "Graduate", "Full-time"],
+          employment_priority: context.employment_priority || "both",
+          salary_currency: state.profileOptions.salary_currency,
+        },
+        resume_analyzed: true,
+        onboarding_step: 3,
+      }),
+    });
+    if (nextDirections.length) {
+      await api("/api/career-fit/preferences", {
+        method: "PUT",
+        body: JSON.stringify({ selected_directions: nextDirections }),
+      });
+    }
+    state.onboardingStep = 3;
+    await refreshFocusData("简历已分析，已按结果预选方向。");
+    status.textContent = "分析完成，可以确认偏好。";
+  }, "已分析");
 }
 
 async function skipOnboarding(event) {
@@ -1161,11 +1409,32 @@ function scheduleFocusRefresh(message) {
 async function changeRegion(region) {
   await api("/api/user-context", {
     method: "PUT",
-    body: JSON.stringify({ active_region: region }),
+    body: JSON.stringify({ active_region: region, onboarding_step: state.userContext?.onboarding_step || state.onboardingStep || 1 }),
   });
   state.selectedCompany = "";
+  state.showAllCompanyRecommendations = false;
   state.dailyRunChecked = false;
   await refresh();
+}
+
+async function changeCity(city) {
+  const context = activeRegionContext();
+  context.city = city;
+  renderUserContextControls();
+  state.selectedCompany = "";
+  state.showAllCompanyRecommendations = false;
+  state.userContext = await api("/api/user-context", {
+    method: "PUT",
+    body: JSON.stringify({
+      active_region: activeRegion(),
+      context: {
+        city,
+        salary_currency: context.salary_currency || state.profileOptions.salary_currency,
+      },
+      onboarding_step: state.userContext?.onboarding_step || state.onboardingStep || 1,
+    }),
+  });
+  scheduleFocusRefresh(`已切换到 ${city || activeRegionConfig().label}，岗位和公司正在重排。`);
 }
 
 async function quickUpdateEmploymentPriority(priority) {
@@ -1460,12 +1729,27 @@ function bindEvents() {
   document.getElementById("profileForm").addEventListener("submit", submitProfile);
   document.getElementById("contextForm").addEventListener("submit", submitUserContext);
   document.getElementById("onboardingForm").addEventListener("submit", submitOnboarding);
-  document.getElementById("skipOnboardingBtn").addEventListener("click", skipOnboarding);
+  document.getElementById("onboardingNextBtn").addEventListener("click", advanceOnboardingLocation);
+  document.getElementById("onboardingAnalyzeBtn").addEventListener("click", analyzeOnboardingResume);
+  document.getElementById("onboardingBackToLocationBtn").addEventListener("click", () => {
+    state.onboardingStep = 1;
+    renderOnboarding();
+  });
+  document.getElementById("onboardingBackToResumeBtn").addEventListener("click", () => {
+    state.onboardingStep = 2;
+    renderOnboarding();
+  });
   document.getElementById("companyAddForm").addEventListener("submit", submitCompany);
   document.getElementById("resumeUploadForm").addEventListener("submit", uploadResume);
   document.getElementById("focusRegion").addEventListener("change", (event) => changeRegion(event.target.value));
+  document.getElementById("focusCity").addEventListener("change", (event) => changeCity(event.target.value));
   document.getElementById("contextRegion").addEventListener("change", (event) => changeRegion(event.target.value));
+  document.getElementById("contextCity").addEventListener("change", (event) => changeCity(event.target.value));
   document.getElementById("onboardingRegion").addEventListener("change", (event) => changeRegion(event.target.value));
+  document.getElementById("onboardingCity").addEventListener("change", (event) => {
+    const form = document.getElementById("onboardingForm");
+    if (form?.elements?.city) form.elements.city.value = event.target.value;
+  });
   document.getElementById("contextSalaryPeriod").addEventListener("change", () => syncSalaryPeriodControls("context"));
   document.getElementById("onboardingSalaryPeriod").addEventListener("change", () => syncSalaryPeriodControls("onboarding"));
   document.getElementById("scanBtn").addEventListener("click", scanJobs);
@@ -1480,14 +1764,32 @@ function bindEvents() {
   document.body.addEventListener("click", handleOptionChip);
   document.body.addEventListener("click", (event) => {
     if (event.target.closest("[data-nav-fit]")) showView("fit");
+    const miniCompany = event.target.closest("[data-company-mini]");
+    if (miniCompany) {
+      state.selectedCompany = miniCompany.dataset.companyMini;
+      state.companyTab = "recommended";
+      showView("companies");
+      renderWatchlist();
+      return;
+    }
     const chip = event.target.closest("[data-direction-id]");
     if (chip) toggleDirection(chip.dataset.directionId);
   });
-  document.getElementById("companyList").addEventListener("click", (event) => {
+  document.querySelectorAll("#companyList, #companyCatalog").forEach((list) => list.addEventListener("click", (event) => {
     const card = event.target.closest("[data-company]");
     if (!card) return;
     if (event.target.closest("[data-watch-action]")) return;
     state.selectedCompany = card.dataset.company;
+    renderWatchlist();
+  }));
+  document.querySelectorAll("[data-company-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.companyTab = button.dataset.companyTab;
+      renderWatchlist();
+    });
+  });
+  document.getElementById("companyMoreBtn").addEventListener("click", () => {
+    state.showAllCompanyRecommendations = !state.showAllCompanyRecommendations;
     renderWatchlist();
   });
   document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));

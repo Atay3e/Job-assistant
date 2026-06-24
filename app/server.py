@@ -908,6 +908,15 @@ CAREER_DIRECTIONS = [
     },
 ]
 
+DIRECTION_CATEGORIES = {
+    "ai-product": "AI 与产品",
+    "ux-product-design": "设计与体验",
+    "user-research": "研究与洞察",
+    "service-design": "研究与洞察",
+    "product-ops": "运营与商业",
+    "growth-content": "运营与商业",
+}
+
 FALLBACK_PROFILE_TEXT = """
 Early-career product, UX, and service design candidate.
 Service design, UX research, user journeys, service blueprints, design innovation,
@@ -1530,6 +1539,8 @@ def default_user_context() -> dict:
         "active_region": "SG",
         "contexts": {code: default_region_context(code) for code in REGION_CONFIGS},
         "onboarding_completed": False,
+        "onboarding_step": 1,
+        "resume_analyzed": False,
         "updated_at": now_iso(),
     }
 
@@ -1540,6 +1551,11 @@ def merge_user_context(stored: dict) -> dict:
         return merged
     merged["active_region"] = normalize_region(stored.get("active_region") or "SG")
     merged["onboarding_completed"] = bool(stored.get("onboarding_completed", merged["onboarding_completed"]))
+    merged["resume_analyzed"] = bool(stored.get("resume_analyzed", merged["resume_analyzed"]))
+    try:
+        merged["onboarding_step"] = max(1, min(3, int(stored.get("onboarding_step") or merged["onboarding_step"])))
+    except (TypeError, ValueError):
+        merged["onboarding_step"] = 1
     contexts = stored.get("contexts") if isinstance(stored.get("contexts"), dict) else {}
     for code in REGION_CONFIGS:
         if isinstance(contexts.get(code), dict):
@@ -1611,10 +1627,25 @@ def save_user_context(payload: dict) -> dict:
             target[key] = [str(item).strip() for item in values if str(item).strip()]
     if "onboarding_completed" in payload:
         context["onboarding_completed"] = bool(payload.get("onboarding_completed"))
+    if "resume_analyzed" in payload:
+        context["resume_analyzed"] = bool(payload.get("resume_analyzed"))
+    if "onboarding_step" in payload:
+        try:
+            context["onboarding_step"] = max(1, min(3, int(payload.get("onboarding_step") or 1)))
+        except (TypeError, ValueError):
+            context["onboarding_step"] = 1
     target["updated_at"] = now_iso()
     context["updated_at"] = target["updated_at"]
     USER_CONTEXT_PATH.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     return context
+
+
+def mark_resume_analyzed() -> None:
+    context = load_user_context()
+    context["resume_analyzed"] = True
+    context["onboarding_step"] = max(3, int(context.get("onboarding_step") or 1))
+    context["updated_at"] = now_iso()
+    USER_CONTEXT_PATH.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def active_region_code(region: str | None = None) -> str:
@@ -1657,14 +1688,16 @@ def profile_options_payload(region: str | None = None) -> dict:
         "label": config["label"],
         "cities": config["cities"],
         "default_city": config["default_city"],
+        "city_required": code == "CN",
         "salary_currency": currency,
         "regions": [{"value": key, "label": value["label"]} for key, value in REGION_CONFIGS.items()],
         "work_authorisation_options": WORK_AUTH_OPTIONS.get(code, WORK_AUTH_OPTIONS["SG"]),
         "employment_priority_options": EMPLOYMENT_PRIORITY_OPTIONS,
         "direction_options": [
-            {"value": item["id"], "label": item["label"]}
+            {"value": item["id"], "label": item["label"], "category": DIRECTION_CATEGORIES.get(item["id"], "其他方向")}
             for item in CAREER_DIRECTIONS
         ],
+        "direction_categories": list(dict.fromkeys(DIRECTION_CATEGORIES.values())),
         "job_type_options": JOB_TYPE_OPTIONS,
         "salary_period_options": SALARY_PERIOD_OPTIONS,
         "salary_band_options": salary_bands,
@@ -1681,8 +1714,9 @@ def watched_company_keys(region: str | None = None) -> set[str]:
     return {row["company"].lower() for row in rows}
 
 
-def company_catalog(region: str | None = None) -> list[dict]:
+def company_catalog(region: str | None = None, city: str | None = None) -> list[dict]:
     code = active_region_code(region)
+    city_name = (city or active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]).strip()
     watched = watched_company_keys(code)
     items = []
     for item in COMPANY_CATALOG:
@@ -1690,8 +1724,9 @@ def company_catalog(region: str | None = None) -> list[dict]:
             continue
         out = dict(item)
         out["watched"] = item["company"].lower() in watched
+        out["city_match"] = city_name in (item.get("city_tags") or [])
         items.append(out)
-    items.sort(key=lambda value: (value.get("watched", False), int(value.get("priority") or 0)), reverse=True)
+    items.sort(key=lambda value: (value.get("watched", False), value.get("city_match", False), int(value.get("priority") or 0)), reverse=True)
     return items
 
 
@@ -2022,6 +2057,7 @@ def analyze_resume_version(resume_version_id: int | None = None, mode: str = "lo
         )
         analysis_id = conn.execute("select last_insert_rowid()").fetchone()[0]
         row = conn.execute("select * from resume_analyses where id=?", (analysis_id,)).fetchone()
+    mark_resume_analyzed()
     return resume_analysis_to_dict(row)
 
 
@@ -2094,9 +2130,10 @@ def career_fit() -> dict:
         "direction_weights": preferences["direction_weights"],
         "exclude_keywords": preferences["exclude_keywords"],
         "all_directions": [
-            {"id": item["id"], "label": item["label"], "keywords": item["keywords"]}
+            {"id": item["id"], "label": item["label"], "keywords": item["keywords"], "category": DIRECTION_CATEGORIES.get(item["id"], "其他方向")}
             for item in CAREER_DIRECTIONS
         ],
+        "resume_analyzed": bool(analysis),
         "ai_available": bool(os.environ.get("OPENAI_API_KEY")),
     }
 
@@ -4452,6 +4489,7 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
     status = (params.get("status") or [""])[0]
     date_filter = (params.get("date") or [""])[0]
     region_filter = (params.get("region") or [""])[0]
+    city_filter = (params.get("city") or [""])[0].strip()
     query = "select * from jobs"
     clauses = []
     values: list[str] = []
@@ -4462,8 +4500,12 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
         clauses.append("(batch_date = ? or found_date = ? or applied_date = ?)")
         values.extend([date_filter, date_filter, date_filter])
     if region_filter:
+        code = active_region_code(region_filter)
         clauses.append("region = ?")
-        values.append(active_region_code(region_filter))
+        values.append(code)
+        if city_filter and code == "CN":
+            clauses.append("(city = ? or location like ? or coalesce(city, '') = '')")
+            values.extend([city_filter, f"%{city_filter}%"])
     if clauses:
         query += " where " + " and ".join(clauses)
     query += " order by score desc, updated_at desc limit 500"
@@ -4542,8 +4584,9 @@ def list_ai_jobs(params: dict[str, list[str]]) -> list[dict]:
         limit = 20
     limit = max(1, min(20, limit))
     region = active_region_code((params.get("region") or [""])[0] or None)
+    city = (params.get("city") or [active_region_context(region).get("city") or ""])[0]
     candidates: list[dict] = []
-    for job in list_jobs({"region": [region]}):
+    for job in list_jobs({"region": [region], "city": [city]}):
         if not is_recommendation_available(job):
             continue
         ai_details = ai_relevance_details(job)
@@ -4746,12 +4789,13 @@ def list_today_recommendations(params: dict[str, list[str]] | None = None) -> di
         limit = 20
     limit = max(1, min(50, limit))
     region = active_region_code((params.get("region") or [""])[0] or None)
+    city = (params.get("city") or [active_region_context(region).get("city") or ""])[0]
     direction_ids, direction_source = active_preference_direction_ids()
     preferences = get_career_preferences()
     exclude_keywords = preferences["exclude_keywords"]
     watched = watched_company_keys(region)
     candidates = []
-    for job in list_jobs({"region": [region]}):
+    for job in list_jobs({"region": [region], "city": [city]}):
         if not is_recommendation_available(job):
             continue
         combined = f"{job.get('company', '')} {job.get('position', '')} {job.get('jd_text', '')}".lower()
@@ -5715,7 +5759,7 @@ class CareerHandler(SimpleHTTPRequestHandler):
             elif parsed.path == "/api/user-context":
                 json_response(self, load_user_context())
             elif parsed.path == "/api/company-catalog":
-                json_response(self, company_catalog((params.get("region") or [""])[0] or None))
+                json_response(self, company_catalog((params.get("region") or [""])[0] or None, (params.get("city") or [""])[0] or None))
             elif parsed.path == "/api/daily/status":
                 json_response(self, daily_status((params.get("region") or [""])[0] or None))
             elif parsed.path == "/api/profile":

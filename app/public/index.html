@@ -72,51 +72,98 @@
         <section id="onboardingPanel" class="panel onboarding-panel" hidden>
           <div class="onboarding-copy">
             <p class="section-kicker">首次设置</p>
-            <h2>先告诉我这次找什么，之后推荐会更稳</h2>
-            <p class="small-text">除地区外都可以空着，薪资只影响排序和标签，不会隐藏岗位。</p>
+            <h2>先定地区，再让简历帮你选方向</h2>
+            <p class="small-text">新用户先选择目标岗位地区；中国大陆需要选城市。上传简历并分析后，再进入薪资和方向设置。</p>
+            <div class="onboarding-progress" aria-label="首次设置进度">
+              <span data-step-dot="1">1 地区</span>
+              <span data-step-dot="2">2 简历分析</span>
+              <span data-step-dot="3">3 偏好</span>
+            </div>
           </div>
           <form id="onboardingForm" class="onboarding-form">
-            <label>
-              <span>目标地区</span>
-              <select name="active_region" id="onboardingRegion"></select>
-            </label>
+            <input type="hidden" name="active_region" />
+            <input type="hidden" name="city" />
             <input type="hidden" name="employment_priority" value="both" />
             <input type="hidden" name="target_directions" />
-            <div class="option-field wide">
-              <span class="option-label">求职重心</span>
-              <div id="onboardingPriorityOptions" class="option-chip-row" role="group" aria-label="求职重心"></div>
+            <input type="hidden" name="job_types" />
+            <input type="hidden" name="work_authorisation" />
+
+            <div class="onboarding-step active" data-onboarding-step="1">
+              <div class="step-copy">
+                <p class="section-kicker">Step 1</p>
+                <h3>你想找哪里的岗位？</h3>
+                <p class="small-text">地区会影响扫描来源、城市关键词、币种和公司推荐。</p>
+              </div>
+              <label>
+                <span>目标地区</span>
+                <select id="onboardingRegion"></select>
+              </label>
+              <label id="onboardingCityField">
+                <span>城市</span>
+                <select id="onboardingCity"></select>
+              </label>
+              <div class="form-actions wide">
+                <span id="onboardingLocationStatus" class="form-status"></span>
+                <button class="primary-button" type="button" id="onboardingNextBtn">下一步：上传简历</button>
+              </div>
             </div>
-            <div class="option-field wide">
-              <span class="option-label">方向</span>
-              <div id="onboardingDirectionOptions" class="option-chip-row" role="group" aria-label="方向"></div>
-              <details class="custom-option">
-                <summary>自定义补充</summary>
-                <input id="onboardingCustomDirections" placeholder="例如 ai-product, ux-product-design，可空" />
-              </details>
+
+            <div class="onboarding-step" data-onboarding-step="2">
+              <div class="step-copy">
+                <p class="section-kicker">Step 2</p>
+                <h3>上传简历并分析</h3>
+                <p class="small-text">分析完成后，系统会预选更适合你的方向。文件只保存在本机。</p>
+              </div>
+              <label class="file-drop wide">
+                <span>选择简历文件</span>
+                <input id="onboardingResumeInput" name="resume" type="file" accept=".pdf,.docx,.md,.txt" />
+              </label>
+              <div id="onboardingAnalysisPreview" class="analysis-preview wide"></div>
+              <div class="form-actions wide">
+                <button class="secondary-button" type="button" id="onboardingBackToLocationBtn">返回地区</button>
+                <span id="onboardingAnalyzeStatus" class="form-status"></span>
+                <button class="primary-button" type="button" id="onboardingAnalyzeBtn">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><path d="M20 16v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3"/></svg>
+                  分析简历
+                </button>
+              </div>
             </div>
-            <label>
-              <span>最低薪资</span>
-              <select name="salary_min" id="onboardingSalaryMin"></select>
-            </label>
-            <label>
-              <span>理想薪资</span>
-              <select name="salary_preferred" id="onboardingSalaryPreferred"></select>
-            </label>
-            <label>
-              <span>薪资周期</span>
-              <select name="salary_period" id="onboardingSalaryPeriod"></select>
-            </label>
-            <label>
-              <span>简历</span>
-              <input id="onboardingResumeInput" name="resume" type="file" accept=".pdf,.docx,.md,.txt" />
-            </label>
-            <div class="form-actions wide">
-              <span id="onboardingStatus" class="form-status"></span>
-              <div class="onboarding-actions">
-                <button class="secondary-button" type="button" id="skipOnboardingBtn">先跳过</button>
+
+            <div class="onboarding-step" data-onboarding-step="3">
+              <div class="step-copy">
+                <p class="section-kicker">Step 3</p>
+                <h3>确认求职偏好</h3>
+                <p class="small-text">薪资只影响排序，不会隐藏岗位；方向已按简历分析结果预选。</p>
+              </div>
+              <div class="option-field wide">
+                <span class="option-label">求职重心</span>
+                <div id="onboardingPriorityOptions" class="option-chip-row" role="group" aria-label="求职重心"></div>
+              </div>
+              <div class="option-field wide">
+                <span class="option-label">感兴趣方向</span>
+                <div id="onboardingDirectionOptions" class="option-group-list" role="group" aria-label="方向"></div>
+                <details class="custom-option">
+                  <summary>自定义补充</summary>
+                  <input id="onboardingCustomDirections" placeholder="例如 ai-product, ux-product-design，可空" />
+                </details>
+              </div>
+              <div class="option-field wide">
+                <span class="option-label">岗位类型</span>
+                <div id="onboardingJobTypeOptions" class="option-chip-row" role="group" aria-label="岗位类型"></div>
+              </div>
+              <div class="option-field wide">
+                <span class="option-label">身份/签证状态</span>
+                <div id="onboardingWorkAuthOptions" class="option-chip-row" role="group" aria-label="身份/签证状态"></div>
+              </div>
+              <label><span>薪资周期</span><select name="salary_period" id="onboardingSalaryPeriod"></select></label>
+              <label><span>最低薪资</span><select name="salary_min" id="onboardingSalaryMin"></select></label>
+              <label><span>理想薪资</span><select name="salary_preferred" id="onboardingSalaryPreferred"></select></label>
+              <div class="form-actions wide">
+                <button class="secondary-button" type="button" id="onboardingBackToResumeBtn">返回简历</button>
+                <span id="onboardingStatus" class="form-status"></span>
                 <button class="primary-button" type="submit">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
-                  保存并进入
+                  保存并进入工作台
                 </button>
               </div>
             </div>
@@ -136,6 +183,10 @@
                   <label class="compact-label">
                     <span>目标地区</span>
                     <select id="focusRegion"></select>
+                  </label>
+                  <label class="compact-label" id="focusCityField">
+                    <span>城市</span>
+                    <select id="focusCity"></select>
                   </label>
                   <div>
                     <span class="option-label">求职重心</span>
@@ -273,6 +324,16 @@
                   生成日报
                 </button>
               </section>
+
+              <section class="ops-card company-mini-card">
+                <div class="ops-card-head">
+                  <div>
+                    <p class="section-kicker">公司雷达</p>
+                    <h2>Top 3 关注建议</h2>
+                  </div>
+                </div>
+                <div id="companyMiniList" class="mini-list"></div>
+              </section>
             </aside>
           </div>
         </section>
@@ -397,10 +458,17 @@
           <div class="section-head">
             <div>
               <p class="section-kicker">公司关注</p>
-              <h2>重点新加坡雇主</h2>
+              <h2>按当前地区查看重点雇主</h2>
             </div>
           </div>
-          <section class="panel company-radar">
+          <details class="panel company-radar company-add-disclosure">
+            <summary>
+              <span>
+                <span class="section-kicker">手动补充</span>
+                <strong>添加官网招聘链接</strong>
+              </span>
+              <span class="small-text">推荐列表没有时再用</span>
+            </summary>
             <form id="companyAddForm" class="company-add-form">
               <label>
                 <span>公司</span>
@@ -419,34 +487,36 @@
                 添加关注
               </button>
             </form>
-          </section>
-          <div class="radar-columns">
-            <section>
-              <div class="section-head compact-head">
+          </details>
+          <div class="company-radar-layout">
+            <aside class="company-directory panel" aria-label="公司列表">
+              <div class="company-directory-head">
                 <div>
-                  <p class="section-kicker">已关注</p>
-                  <h2>会进入官网浅扫描</h2>
+                  <p class="section-kicker">公司列表</p>
+                  <h2>关注与推荐</h2>
+                </div>
+                <div class="segment compact-segment" aria-label="公司列表类型">
+                  <button class="segment-button active" data-company-tab="watched">已关注</button>
+                  <button class="segment-button" data-company-tab="recommended">推荐</button>
                 </div>
               </div>
-              <div id="companyList" class="company-grid"></div>
-            </section>
-            <section>
-              <div class="section-head compact-head">
+              <div id="companyList" class="company-list compact-company-list"></div>
+              <div id="companyCatalog" class="company-list compact-company-list" hidden></div>
+              <button class="secondary-button compact-button company-more-button" id="companyMoreBtn" type="button" hidden>展开更多推荐</button>
+            </aside>
+            <section class="company-detail panel" aria-label="公司岗位">
+              <div class="company-detail-head">
                 <div>
-                  <p class="section-kicker">推荐关注</p>
-                  <h2>按当前地区给出重点雇主</h2>
+                  <p class="section-kicker">公司岗位</p>
+                  <h2 id="companyJobsTitle">选择一家公司查看岗位</h2>
+                  <p id="companyDetailText" class="small-text">点击左侧公司后，这里会立即显示公司信息和相关岗位。</p>
                 </div>
+                <div id="companyDetailActions" class="company-detail-actions"></div>
               </div>
-              <div id="companyCatalog" class="company-grid"></div>
+              <div id="companyDetailCard" class="company-detail-card"></div>
+              <div id="companyJobs" class="job-list company-job-list"></div>
             </section>
           </div>
-          <div class="section-head company-jobs-head">
-            <div>
-              <p class="section-kicker">公司岗位</p>
-              <h2 id="companyJobsTitle">选择一家公司查看岗位</h2>
-            </div>
-          </div>
-          <div id="companyJobs" class="job-list"></div>
         </section>
 
         <section class="view" id="notionView">
