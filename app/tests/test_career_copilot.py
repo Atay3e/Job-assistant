@@ -134,6 +134,71 @@ class MultiUserStorageTests(TempAppMixin, unittest.TestCase):
             self.assertEqual(workspace_file.read_text(encoding="utf-8"), "draft body")
             self.assertFalse(browser_secret.exists())
 
+    def test_cloud_state_sync_uploads_and_restores_user_state(self):
+        storage: dict[str, bytes] = {}
+        bucket_created = {"value": False}
+
+        def fake_storage_request(method, path, data=None, headers=None, tolerate_404=False):
+            if path == "/bucket" and method == "POST":
+                bucket_created["value"] = True
+                return 200, b"{}"
+            if path.startswith("/bucket/"):
+                if method == "GET":
+                    if bucket_created["value"]:
+                        return 200, b"{}"
+                    if tolerate_404:
+                        return 404, b"{}"
+            if "/object/" in path:
+                object_path = path.split("/object/", 1)[1]
+                if method == "GET":
+                    if object_path in storage:
+                        return 200, storage[object_path]
+                    if tolerate_404:
+                        return 404, b"{}"
+                if method == "POST":
+                    storage[object_path] = data or b""
+                    return 200, b"{}"
+            raise AssertionError(f"unexpected storage request: {method} {path}")
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "JOB_ASSISTANT_CLOUD_STATE": "1",
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_SERVICE_ROLE_KEY": "service.jwt.token",
+                "SUPABASE_STORAGE_BUCKET": "job-assistant-users",
+            },
+            clear=False,
+        ), mock.patch.object(server, "supabase_storage_request", side_effect=fake_storage_request):
+            with server.request_user_context("roundtrip-user"):
+                server.setup_db()
+                server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
+                job = server.upsert_job(
+                    {
+                        "company": "Roundtrip Co",
+                        "position": "UX Intern",
+                        "source": "Manual",
+                        "url": "https://example.com/roundtrip",
+                        "jd_text": "Shanghai UX internship.",
+                        "region": "CN",
+                        "city": "Shanghai",
+                    }
+                )
+                self.assertTrue(server.sync_cloud_state("test"))
+                self.assertTrue(any(key.endswith("roundtrip-user/state.zip") for key in storage))
+
+                shutil.rmtree(server.current_data_dir())
+                shutil.rmtree(server.current_workspace_dir())
+                server.CLOUD_STATE_LOADED.clear()
+                server.INITIALIZED_DB_PATHS.clear()
+
+                restored_context = server.load_user_context()
+                restored_jobs = server.list_jobs({})
+
+            self.assertEqual(restored_context["active_region"], "CN")
+            self.assertEqual(restored_context["contexts"]["CN"]["city"], "Shanghai")
+            self.assertTrue(any(item["url"] == job["url"] for item in restored_jobs))
+
 
 class AuthTests(unittest.TestCase):
     def test_bearer_token_can_be_verified_through_supabase_auth_without_jwt_secret(self):
