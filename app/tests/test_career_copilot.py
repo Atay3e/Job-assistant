@@ -135,6 +135,38 @@ class MultiUserStorageTests(TempAppMixin, unittest.TestCase):
             self.assertFalse(browser_secret.exists())
 
 
+class AuthTests(unittest.TestCase):
+    def test_bearer_token_can_be_verified_through_supabase_auth_without_jwt_secret(self):
+        class Handler:
+            headers = {"Authorization": "Bearer token-123"}
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"id":"user-123"}'
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_ANON_KEY": "anon-key",
+                "SUPABASE_JWT_SECRET": "",
+            },
+            clear=False,
+        ), mock.patch.object(server.urllib.request, "urlopen", return_value=Response()) as urlopen_mock:
+            self.assertEqual(server.user_id_from_bearer_token(Handler()), "user-123")
+
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(request.full_url, "https://example.supabase.co/auth/v1/user")
+
+
 class ParserTests(unittest.TestCase):
     def fixture(self, name: str) -> str:
         return (FIXTURES / name).read_text(encoding="utf-8")

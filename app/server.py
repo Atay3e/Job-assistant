@@ -1618,6 +1618,10 @@ def supabase_base_url() -> str:
     return (os.environ.get("SUPABASE_URL") or "").rstrip("/")
 
 
+def supabase_anon_key() -> str:
+    return os.environ.get("SUPABASE_ANON_KEY", "")
+
+
 def supabase_service_role_key() -> str:
     return os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
@@ -1860,15 +1864,38 @@ def user_id_from_bearer_token(handler: SimpleHTTPRequestHandler) -> str:
     if not token:
         raise AuthError("请先登录。")
     secret = os.environ.get("SUPABASE_JWT_SECRET")
-    if not secret:
-        raise AuthError("服务端还没有配置 SUPABASE_JWT_SECRET。")
-    if jwt is None:
-        raise AuthError("服务端缺少 PyJWT，请重新安装依赖。")
+    if secret:
+        if jwt is None:
+            raise AuthError("服务端缺少 PyJWT，请重新安装依赖。")
+        try:
+            payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+        except Exception as exc:
+            raise AuthError("登录已过期，请重新登录。") from exc
+        user_id = payload.get("sub")
+        if not user_id:
+            raise AuthError("登录信息无效，请重新登录。")
+        return str(user_id)
+    return user_id_from_supabase_auth(token)
+
+
+def user_id_from_supabase_auth(token: str) -> str:
+    base = supabase_base_url()
+    anon_key = supabase_anon_key()
+    if not base or not anon_key:
+        raise AuthError("服务端还没有配置 Supabase 登录服务。")
+    request = urllib.request.Request(
+        f"{base}/auth/v1/user",
+        headers={
+            "apikey": anon_key,
+            "Authorization": f"Bearer {token}",
+        },
+    )
     try:
-        payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8") or "{}")
     except Exception as exc:
         raise AuthError("登录已过期，请重新登录。") from exc
-    user_id = payload.get("sub")
+    user_id = payload.get("id") or payload.get("sub")
     if not user_id:
         raise AuthError("登录信息无效，请重新登录。")
     return str(user_id)

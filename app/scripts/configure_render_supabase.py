@@ -19,7 +19,6 @@ SERVICE_ID = "srv-d8tujlho3t8c73c3h60g"
 REQUIRED = [
     "SUPABASE_URL",
     "SUPABASE_ANON_KEY",
-    "SUPABASE_JWT_SECRET",
     "SUPABASE_SERVICE_ROLE_KEY",
 ]
 
@@ -35,7 +34,7 @@ def validate_values(values: dict[str, str]) -> None:
     for key in ["SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]:
         if not looks_like_jwt(values[key]):
             raise SystemExit(f"{key} does not look like a Supabase JWT key.")
-    if len(values["SUPABASE_JWT_SECRET"]) < 20:
+    if values.get("SUPABASE_JWT_SECRET") and len(values["SUPABASE_JWT_SECRET"]) < 20:
         raise SystemExit("SUPABASE_JWT_SECRET looks too short.")
     request = urllib.request.Request(
         f"{url}/auth/v1/settings",
@@ -126,6 +125,8 @@ def main() -> None:
     values = load_env(env_file)
     key = render_api_key()
     for name, value in values.items():
+        if not value and name not in REQUIRED:
+            continue
         if name.startswith("SUPABASE_") or name.startswith("JOB_ASSISTANT_") or name == "APP_SECRET_KEY":
             update_render_env(name, value, key)
     print("Render Supabase environment is ready. Trigger a deploy with: render deploys create srv-d8tujlho3t8c73c3h60g --wait --confirm")

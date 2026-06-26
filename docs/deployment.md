@@ -44,7 +44,6 @@ Before sharing the app with friends, create a Supabase project and add these Ren
 ```text
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
-SUPABASE_JWT_SECRET=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_STORAGE_BUCKET=job-assistant-users
 APP_SECRET_KEY=
@@ -53,6 +52,8 @@ APP_SECRET_KEY=
 With auth enabled, every private API request requires a Supabase login token. Each user gets a separate temporary data directory under `JOB_ASSISTANT_DATA_DIR/users/<user_id>/`, and that directory is synced to Supabase Storage after writes. Preferences, resumes, queues, applied jobs, watched companies, scan records, generated files, and Notion settings do not mix.
 
 The backend uses the service role key only on the server to create and update private state archives. Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
+
+`SUPABASE_JWT_SECRET` is optional. If present, the backend validates login tokens locally. If omitted, it verifies tokens through Supabase Auth.
 
 To avoid pasting secrets into chat, save those values locally in `app/.env.supabase.local` and run:
 

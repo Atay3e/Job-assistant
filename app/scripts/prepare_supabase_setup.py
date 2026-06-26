@@ -11,13 +11,14 @@ ENV_FILE = APP_DIR / ".env.supabase.local"
 TEMPLATE = """# Fill these from your Supabase project.
 # Supabase Dashboard:
 # - Project URL and anon key: Project Settings > API
-# - JWT secret: Project Settings > API > JWT Settings
 # - Service role key: Project Settings > API > Project API keys
+# Optional:
+# - JWT secret: Project Settings > API > JWT Settings
 
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
-SUPABASE_JWT_SECRET=
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_JWT_SECRET=
 SUPABASE_STORAGE_BUCKET=job-assistant-users
 """
 
