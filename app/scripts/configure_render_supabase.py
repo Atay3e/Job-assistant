@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -21,6 +24,36 @@ REQUIRED = [
 ]
 
 
+def looks_like_jwt(value: str) -> bool:
+    return bool(re.match(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$", value or ""))
+
+
+def validate_values(values: dict[str, str]) -> None:
+    url = values["SUPABASE_URL"].rstrip("/")
+    if not re.match(r"^https://[A-Za-z0-9-]+\\.supabase\\.co$", url):
+        raise SystemExit("SUPABASE_URL should look like https://xxxx.supabase.co")
+    for key in ["SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]:
+        if not looks_like_jwt(values[key]):
+            raise SystemExit(f"{key} does not look like a Supabase JWT key.")
+    if len(values["SUPABASE_JWT_SECRET"]) < 20:
+        raise SystemExit("SUPABASE_JWT_SECRET looks too short.")
+    request = urllib.request.Request(
+        f"{url}/auth/v1/settings",
+        headers={
+            "apikey": values["SUPABASE_ANON_KEY"],
+            "Authorization": f"Bearer {values['SUPABASE_ANON_KEY']}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status >= 400:
+                raise SystemExit(f"Supabase settings check failed with HTTP {response.status}.")
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"Supabase anon key check failed: HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise SystemExit(f"Cannot reach Supabase project: {exc}") from exc
+
+
 def load_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -34,6 +67,7 @@ def load_env(path: Path) -> dict[str, str]:
     missing = [key for key in REQUIRED if not values.get(key)]
     if missing:
         raise SystemExit(f"Missing values in {path}: {', '.join(missing)}")
+    validate_values(values)
     values.setdefault("SUPABASE_STORAGE_BUCKET", "job-assistant-users")
     values.setdefault("JOB_ASSISTANT_REQUIRE_AUTH", "1")
     values.setdefault("JOB_ASSISTANT_DATA_DIR", "/tmp/job-assistant/app-data")
