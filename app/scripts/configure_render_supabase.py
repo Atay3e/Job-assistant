@@ -30,7 +30,7 @@ def looks_like_jwt(value: str) -> bool:
 
 def validate_values(values: dict[str, str]) -> None:
     url = values["SUPABASE_URL"].rstrip("/")
-    if not re.match(r"^https://[A-Za-z0-9-]+\\.supabase\\.co$", url):
+    if not re.match(r"^https://[A-Za-z0-9-]+\.supabase\.co$", url):
         raise SystemExit("SUPABASE_URL should look like https://xxxx.supabase.co")
     for key in ["SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]:
         if not looks_like_jwt(values[key]):
