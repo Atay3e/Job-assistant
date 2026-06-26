@@ -43,9 +43,25 @@ def choose_project(projects: list[dict]) -> dict:
 
 def key_value(keys: list[dict], names: set[str]) -> str:
     for item in keys:
-        name = str(item.get("name") or item.get("key") or "").lower()
+        raw_name = (
+            item.get("name")
+            or item.get("key")
+            or item.get("type")
+            or item.get("role")
+            or item.get("description")
+            or ""
+        )
+        name = str(raw_name).lower().replace("-", "_").replace(" ", "_")
         if name in names:
-            return item.get("api_key") or item.get("value") or item.get("key_value") or ""
+            return (
+                item.get("api_key")
+                or item.get("apiKey")
+                or item.get("value")
+                or item.get("key_value")
+                or item.get("keyValue")
+                or item.get("token")
+                or ""
+            )
     return ""
 
 
@@ -57,8 +73,8 @@ def main() -> None:
         raise SystemExit("Could not determine Supabase project ref.")
     keys_payload = run_json(["supabase", "projects", "api-keys", "--project-ref", project_ref, "--output-format", "json"])
     keys = keys_payload if isinstance(keys_payload, list) else keys_payload.get("api_keys", [])
-    anon = key_value(keys, {"anon", "anon key", "public"})
-    service_role = key_value(keys, {"service_role", "service role", "service_role key"})
+    anon = key_value(keys, {"anon", "anon_key", "public", "publishable"})
+    service_role = key_value(keys, {"service_role", "service_role_key", "secret"})
     if not anon or not service_role:
         raise SystemExit("Could not find anon and service_role keys from Supabase CLI output.")
     url = project.get("api_url") or project.get("rest_url") or f"https://{project_ref}.supabase.co"
