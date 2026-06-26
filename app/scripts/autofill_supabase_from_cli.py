@@ -72,7 +72,7 @@ def main() -> None:
     if not project_ref:
         raise SystemExit("Could not determine Supabase project ref.")
     keys_payload = run_json(["supabase", "projects", "api-keys", "--project-ref", project_ref, "--output-format", "json"])
-    keys = keys_payload if isinstance(keys_payload, list) else keys_payload.get("api_keys", [])
+    keys = keys_payload if isinstance(keys_payload, list) else (keys_payload.get("api_keys") or keys_payload.get("apiKeys") or keys_payload.get("keys") or [])
     anon = key_value(keys, {"anon", "anon_key", "public", "publishable"})
     service_role = key_value(keys, {"service_role", "service_role_key", "secret"})
     if not anon or not service_role:
