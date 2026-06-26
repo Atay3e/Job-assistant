@@ -237,6 +237,29 @@ class SupabaseSetupScriptTests(unittest.TestCase):
         self.assertEqual(values["JOB_ASSISTANT_REQUIRE_AUTH"], "1")
 
 
+class SupabaseStorageTests(unittest.TestCase):
+    def test_storage_bucket_missing_400_body_is_treated_as_404(self):
+        error = server.urllib.error.HTTPError(
+            "https://example.supabase.co/storage/v1/bucket/missing",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(b'{"statusCode":"404","error":"Bucket not found","message":"Bucket not found"}'),
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SUPABASE_URL": "https://example.supabase.co",
+                "SUPABASE_SERVICE_ROLE_KEY": "service.jwt.token",
+            },
+            clear=False,
+        ), mock.patch.object(server.urllib.request, "urlopen", side_effect=error):
+            status, payload = server.supabase_storage_request("GET", "/bucket/missing", tolerate_404=True)
+
+        self.assertEqual(status, 404)
+        self.assertIn(b"Bucket not found", payload)
+
+
 class AuthTests(unittest.TestCase):
     def test_bearer_token_can_be_verified_through_supabase_auth_without_jwt_secret(self):
         class Handler:

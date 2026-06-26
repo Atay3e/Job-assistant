@@ -1680,9 +1680,9 @@ def supabase_storage_request(
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         body = exc.read()
-        if tolerate_404 and exc.code == 404:
-            return exc.code, body
         detail = body.decode("utf-8", errors="ignore")
+        if tolerate_404 and (exc.code == 404 or '"statusCode":"404"' in detail or '"statusCode":404' in detail):
+            return 404, body
         raise ValueError(f"Supabase Storage error {exc.code}: {detail}") from exc
 
 
