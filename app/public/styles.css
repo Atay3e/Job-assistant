@@ -238,6 +238,51 @@ h3 {
   box-shadow: 0 0 0 4px rgba(216, 241, 231, 0.18);
 }
 
+.account-box {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  padding: 11px;
+  border: 1px solid rgba(216, 241, 231, 0.16);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(235, 248, 243, 0.76);
+  font-size: 12px;
+}
+
+.account-box span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-action-button {
+  min-height: 34px;
+  border: 1px solid rgba(216, 241, 231, 0.18);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-weight: 760;
+}
+
+.auth-screen {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 480px);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+}
+
 .workspace {
   min-width: 0;
   padding: 28px clamp(20px, 3.6vw, 52px) 52px;
@@ -668,8 +713,21 @@ button.is-error {
 
 .mini-list {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   margin-top: 12px;
+}
+
+.mini-group {
+  display: grid;
+  gap: 7px;
+}
+
+.mini-group-title {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .mini-item {
@@ -677,6 +735,11 @@ button.is-error {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #f8fbfa;
+}
+
+.mini-item.applied-mini-item {
+  border-color: rgba(47, 117, 95, 0.18);
+  background: #f0faf6;
 }
 
 .mini-item strong {
@@ -1067,6 +1130,18 @@ button.is-error {
   background: var(--accent);
 }
 
+.job-card.freshness-fresh::before {
+  background: #0f6b55;
+}
+
+.job-card.freshness-recent::before {
+  background: var(--blue);
+}
+
+.job-card.freshness-stale::before {
+  background: var(--line-strong);
+}
+
 .job-card:hover {
   transform: translateY(-1px);
   border-color: rgba(49, 93, 123, 0.32);
@@ -1173,6 +1248,26 @@ button.is-error {
   border-color: rgba(138, 100, 56, 0.24);
   background: var(--amber-soft);
   color: var(--amber);
+}
+
+.badge.freshness-badge {
+  border-color: rgba(15, 107, 85, 0.24);
+  background: #e1f5ed;
+  color: #0b5d4b;
+  font-weight: 850;
+}
+
+.badge.freshness-badge.recent {
+  border-color: rgba(49, 95, 125, 0.24);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.badge.freshness-badge.stale {
+  border-color: var(--line);
+  background: #f3f6f5;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .job-url {
@@ -1607,6 +1702,13 @@ th {
   line-height: 1.5;
 }
 
+.company-scan-note {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .company-jobs-head {
   margin-top: 24px;
 }
@@ -1651,6 +1753,13 @@ th {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 20px;
+}
+
+.notion-config-form {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 14px;
 }
 
 .notion-guide ol {
@@ -1841,6 +1950,10 @@ pre {
     display: none;
   }
 
+  .account-box {
+    display: none;
+  }
+
   .workspace {
     padding: 18px 14px 42px;
   }
@@ -1880,6 +1993,7 @@ pre {
   .section-head,
   .ops-card-head,
   .inline-head,
+  .notion-config-form,
   .notion-guide,
   .tracker-toolbar {
     display: grid;

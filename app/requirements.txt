@@ -1,6 +1,7 @@
 beautifulsoup4
 lxml
 playwright
+PyJWT
 PyMuPDF
 python-docx
 reportlab

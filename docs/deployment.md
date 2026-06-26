@@ -10,7 +10,7 @@ Vercel is not the best direct target for the current version. It is excellent fo
 
 Render or Railway are better first deployment targets because they can run the existing Docker app with much less rewrite.
 
-## Render Free Deploy
+## Render Deploy
 
 Open:
 
@@ -22,35 +22,49 @@ Use the default blueprint settings:
 
 - Service name: `job-assistant`
 - Environment: Docker
-- Plan: free
+- Plan: starter
 - Health check: `/api/health`
+- Persistent disk: `/data`
 
-The free blueprint uses temporary storage:
+The blueprint stores runtime files under the persistent disk:
 
 ```text
 JOB_ASSISTANT_HOST=0.0.0.0
-JOB_ASSISTANT_DATA_DIR=/tmp/job-assistant/app-data
-JOB_ASSISTANT_WORKSPACE_DIR=/tmp/job-assistant/workspace
-```
-
-This makes the free deployment pass Render's validation. The tradeoff is that uploaded resumes, SQLite data, and generated workspace files are not guaranteed to survive restarts or redeploys.
-
-## Stable Data Options
-
-For a real public product, use one of these:
-
-1. Render paid web service with a persistent disk, then set:
-
-```text
 JOB_ASSISTANT_DATA_DIR=/data/app-data
 JOB_ASSISTANT_WORKSPACE_DIR=/data/workspace
+JOB_ASSISTANT_REQUIRE_AUTH=1
 ```
 
-2. Refactor to external storage:
+Render services without a persistent disk use temporary storage, so uploaded resumes, SQLite data, and generated workspace files are not guaranteed to survive restarts or redeploys.
 
-- Postgres or Supabase for jobs, profiles, applications, and scan runs
-- S3 or Cloudflare R2 for resumes and generated documents
-- Login/account separation before opening it to many users
+## Supabase Auth
+
+Before sharing the app with friends, create a Supabase project and add these Render environment variables:
+
+```text
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_JWT_SECRET=
+SUPABASE_SERVICE_ROLE_KEY=
+APP_SECRET_KEY=
+```
+
+With auth enabled, every private API request requires a Supabase login token. Each user gets a separate data directory under `/data/app-data/users/<user_id>/`, so preferences, resumes, queues, applied jobs, watched companies, scan records, and Notion settings do not mix.
+
+## Owner Data Migration
+
+After creating your own Supabase account, copy your existing local data into your account-scoped storage:
+
+```text
+cd app
+python scripts/migrate_local_owner.py --user-id YOUR_SUPABASE_USER_ID
+```
+
+Friends should create their own accounts and start from empty data.
+
+## Future Vercel Split
+
+Vercel can be useful later for a frontend-only deployment, but this current Python app still runs a long-lived backend with scanners, uploads, local browser assist, and Playwright. Keep the backend on Render or Railway unless the API is refactored for serverless storage and background jobs.
 
 ## Privacy Note
 
@@ -61,4 +75,4 @@ Do not upload local runtime folders to public hosting:
 - `app/logs/`
 - `.env`
 
-The current free deploy path is good for demos and early testing. For real public users, add account separation and persistent external storage first.
+The current deploy path is meant for authenticated friends, not anonymous public traffic.

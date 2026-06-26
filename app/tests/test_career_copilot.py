@@ -40,13 +40,54 @@ class TempAppMixin:
         server.APPLY_ASSIST_DIR = server.DATA_DIR / "apply-assist"
         server.BROWSER_PROFILE_DIR = server.DATA_DIR / "browser-profile"
         server.RESUME_UPLOAD_DIR = server.DATA_DIR / "resumes"
+        server.INITIALIZED_DB_PATHS.clear()
         server.setup_db()
 
     def tearDown(self) -> None:
         server.SCAN_THREADS.clear()
+        server.INITIALIZED_DB_PATHS.clear()
         for key, value in self.old_paths.items():
             setattr(server, key, value)
         self.tmp.cleanup()
+
+
+class MultiUserStorageTests(TempAppMixin, unittest.TestCase):
+    def test_user_context_is_scoped_by_user(self):
+        with server.request_user_context("user-a"):
+            server.setup_db()
+            server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
+
+        with server.request_user_context("user-b"):
+            server.setup_db()
+            context_b = server.load_user_context()
+
+        with server.request_user_context("user-a"):
+            context_a = server.load_user_context()
+
+        self.assertEqual(context_a["active_region"], "CN")
+        self.assertEqual(context_a["contexts"]["CN"]["city"], "Shanghai")
+        self.assertEqual(context_b["active_region"], "SG")
+
+    def test_jobs_are_scoped_by_user(self):
+        with server.request_user_context("user-a"):
+            server.setup_db()
+            server.upsert_job(
+                {
+                    "company": "Scoped Co",
+                    "position": "Product Design Intern",
+                    "source": "Manual",
+                    "url": "https://example.com/scoped-a",
+                    "jd_text": "Singapore product design internship.",
+                }
+            )
+            jobs_a = server.list_jobs({})
+
+        with server.request_user_context("user-b"):
+            server.setup_db()
+            jobs_b = server.list_jobs({})
+
+        self.assertEqual(len([job for job in jobs_a if job["company"] == "Scoped Co"]), 1)
+        self.assertEqual(len([job for job in jobs_b if job["company"] == "Scoped Co"]), 0)
 
 
 class ParserTests(unittest.TestCase):
@@ -90,6 +131,60 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(server.detect_employment_type("Graduate Product Designer"), "Graduate")
         self.assertEqual(server.detect_employment_type("Full-time UX Designer"), "Full-time")
         self.assertEqual(server.detect_employment_type("Contract UX Researcher"), "Contract")
+
+    def test_company_jsonld_and_greenhouse_jobs_parse(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type":"JobPosting","title":"AI Product Intern","url":"https://example.com/jobs/ai-product-intern","description":"Internship with product and user research work.","jobLocation":{"address":{"addressLocality":"Singapore"}}}
+        </script>
+        """
+        jobs = server.parse_company_jsonld_jobs(html, "https://example.com/careers", "Example AI", "AI product internships", "SG", "Singapore", 5)
+        self.assertEqual(jobs[0]["position"], "AI Product Intern")
+        self.assertEqual(jobs[0]["source"], "Company Site / ATS")
+
+        payload = {
+            "jobs": [
+                {
+                    "title": "UX Research Intern",
+                    "absolute_url": "https://boards.greenhouse.io/example/jobs/123",
+                    "content": "Internship role for UX research and service design.",
+                    "location": {"name": "Singapore"},
+                }
+            ]
+        }
+        with mock.patch.object(server, "http_get", return_value=json.dumps(payload)):
+            ats_jobs, failures = server.fetch_company_ats_jobs("https://boards.greenhouse.io/example", "Example AI", "UX research", "SG", "Singapore", 5)
+
+        self.assertFalse(failures)
+        self.assertEqual(ats_jobs[0]["position"], "UX Research Intern")
+
+    def test_workable_company_jobs_parse_and_filter_region(self):
+        payload = {
+            "jobs": [
+                {
+                    "title": "AI Product Manager Intern",
+                    "url": "https://apply.workable.com/j/abc123",
+                    "description": "Support AI product experiments and UX research.",
+                    "city": "Singapore",
+                    "country": "Singapore",
+                    "locations": [{"city": "Singapore", "country": "Singapore", "countryCode": "SG"}],
+                },
+                {
+                    "title": "Finance Manager",
+                    "url": "https://apply.workable.com/j/my123",
+                    "description": "Finance leadership role.",
+                    "city": "Kuala Lumpur",
+                    "country": "Malaysia",
+                    "locations": [{"city": "Kuala Lumpur", "country": "Malaysia", "countryCode": "MY"}],
+                },
+            ]
+        }
+        with mock.patch.object(server, "http_get", return_value=json.dumps(payload)):
+            jobs, failures = server.fetch_company_ats_jobs("https://apply.workable.com/youtrip/?lng=en", "YouTrip", "AI product internships", "SG", "Singapore", 5)
+
+        self.assertFalse(failures)
+        self.assertEqual([job["position"] for job in jobs], ["AI Product Manager Intern"])
+        self.assertEqual(jobs[0]["source"], "Company Site / ATS")
 
 
 class DailyRunTests(TempAppMixin, unittest.TestCase):
@@ -212,12 +307,87 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
         catalog = server.company_catalog("SG")
         by_company = {item["company"]: item for item in catalog}
 
-        for company in ["IKEA Singapore", "foodpanda Singapore", "POP MART Singapore", "Changi Airport Group", "PatSnap", "Hypotenuse AI", "WIZ.AI", "ADVANCE.AI"]:
+        for company in [
+            "IKEA Singapore",
+            "foodpanda Singapore",
+            "POP MART Singapore",
+            "Changi Airport Group",
+            "PatSnap",
+            "Hypotenuse AI",
+            "WIZ.AI",
+            "ADVANCE.AI",
+            "Flowmingo AI",
+            "NodeFlair",
+            "Funding Societies",
+            "YouTrip",
+            "PropertyGuru Group",
+            "EPOS",
+            "Moomoo Singapore",
+        ]:
             self.assertIn(company, by_company)
             self.assertTrue(by_company[company].get("recommend_reason"))
             self.assertTrue(by_company[company].get("tags"))
+            self.assertIn("matched_jobs_count", by_company[company])
+            self.assertTrue(by_company[company].get("aliases"))
 
         self.assertIn("中文友好概率较高", by_company["POP MART Singapore"]["tags"])
+        self.assertEqual(by_company["YouTrip"]["url"], "https://apply.workable.com/youtrip/?lng=en")
+        self.assertEqual(by_company["PropertyGuru Group"]["url"], "https://propertyguru.wd105.myworkdayjobs.com/PropertyGuru")
+
+    def test_company_job_matching_uses_backend_aliases(self):
+        wiz = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "WIZ HOLDINGS PTE LTD",
+                "position": "AI Conversational Designer Internship",
+                "source": "JobStreet",
+                "url": "https://sg.jobstreet.com/job/wiz-alias",
+                "jd_text": "Singapore conversational AI internship for UX writing and customer journeys.",
+            }
+        )
+        advance = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Advance Intelligence Group",
+                "position": "Product Manager Intern",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/4412345678",
+                "jd_text": "Singapore AI fintech product internship.",
+            }
+        )
+        foodpanda = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "foodpanda",
+                "position": "Marketing Analytics Intern",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/4412345679",
+                "jd_text": "Singapore local services marketing analytics internship.",
+            }
+        )
+        unrelated = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Evo Commerce",
+                "position": "Artificial Intelligence Engineer",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/4412345680",
+                "jd_text": "The team has past experience at Grab, TikTok, Zalora, FoodPanda, and Shopee.",
+            }
+        )
+
+        wiz_payload = server.company_jobs_payload("WIZ.AI", "SG")
+        advance_payload = server.company_jobs_payload("ADVANCE.AI", "SG")
+        foodpanda_payload = server.company_jobs_payload("foodpanda Singapore", "SG")
+
+        self.assertIn(wiz["id"], [job["id"] for job in wiz_payload["jobs"]])
+        self.assertIn(advance["id"], [job["id"] for job in advance_payload["jobs"]])
+        self.assertIn(foodpanda["id"], [job["id"] for job in foodpanda_payload["jobs"]])
+        self.assertNotIn(unrelated["id"], [job["id"] for job in foodpanda_payload["jobs"]])
+        self.assertEqual(wiz_payload["jobs"][0]["company_match_source_label"], "JobStreet 匹配")
+        catalog = {item["company"]: item for item in server.company_catalog("SG")}
+        self.assertGreater(catalog["WIZ.AI"]["matched_jobs_count"], 0)
+        self.assertGreater(catalog["ADVANCE.AI"]["matched_jobs_count"], 0)
 
     def test_user_context_catalog_and_watchlist_crud(self):
         regions = server.regions_payload()
@@ -483,7 +653,7 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
             self.assertTrue(started["started"])
             self.assertTrue(started["running"])
             run_id = started["run"]["id"]
-            thread = server.SCAN_THREADS.get(run_id)
+            thread = server.SCAN_THREADS.get(server.scan_thread_key(run_id))
             self.assertIsNotNone(thread)
             thread.join(timeout=1)
 
@@ -512,7 +682,7 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
         with mock.patch.object(server, "scan_sources", fake_scan_sources):
             started = server.start_scan_async(triggered_by="manual", forced=True, region="SG")
             self.assertTrue(started["started"])
-            thread = server.SCAN_THREADS.get(started["run"]["id"])
+            thread = server.SCAN_THREADS.get(server.scan_thread_key(started["run"]["id"]))
             if thread:
                 thread.join(timeout=1)
 

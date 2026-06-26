@@ -16,6 +16,7 @@ const state = {
   recommendationView: "fit",
   selectedCompany: "",
   trackerMode: "all",
+  trackerStatus: "all",
   trackerDate: "",
   trackerMonth: "",
   notionStatus: {},
@@ -23,12 +24,20 @@ const state = {
   profile: {},
   careerFit: {},
   scan: {},
+  companyJobs: {},
+  companyJobsLoading: {},
   scanPollTimer: null,
   focusRefreshTimer: null,
   onboardingStep: 1,
   companyTab: "watched",
   showAllCompanyRecommendations: false,
   dailyRunChecked: false,
+  auth: {
+    config: { auth_required: false },
+    client: null,
+    session: null,
+    userId: "",
+  },
 };
 
 const icon = {
@@ -79,18 +88,14 @@ const SCAN_STATUS_ZH = {
   interrupted: "已中断",
 };
 
-const COMPANY_ALIASES = {
-  ByteDance: ["ByteDance", "TikTok"],
-  PDD: ["PDD", "Pinduoduo", "Temu"],
-  Sea: ["Sea", "Shopee", "Garena"],
-};
-
 const RECOMMENDATION_EXCLUDED_STATUSES = new Set(["Apply Queue", "Drafted", "Applied", "Dropped", "Closed"]);
 
 async function api(path, options = {}) {
   const init = { ...options };
   const headers = options.body instanceof FormData ? {} : { "Content-Type": "application/json" };
   init.headers = { ...headers, ...(options.headers || {}) };
+  const token = state.auth.session?.access_token;
+  if (token) init.headers.Authorization = `Bearer ${token}`;
   const response = await fetch(path, init);
   const text = await response.text();
   let data = {};
@@ -102,9 +107,99 @@ async function api(path, options = {}) {
     }
   }
   if (!response.ok) {
+    if (response.status === 401 && state.auth.config?.auth_required) {
+      showAuthScreen("请先登录后再继续。");
+    }
     throw new Error(data.error || "请求失败");
   }
   return data;
+}
+
+function setAppVisibility(showApp) {
+  const app = document.querySelector(".app-shell");
+  const auth = document.getElementById("authScreen");
+  if (app) app.hidden = !showApp;
+  if (auth) auth.hidden = showApp;
+}
+
+function resetPrivateState() {
+  Object.assign(state, {
+    jobs: [],
+    aiJobs: [],
+    recommendations: { jobs: [], active_direction_ids: [], direction_source: "base_score" },
+    summary: {},
+    watchlist: [],
+    regions: { regions: [], active_region: "SG" },
+    userContext: { active_region: "SG", contexts: {} },
+    profileOptions: {},
+    companyCatalog: [],
+    daily: {},
+    profile: {},
+    careerFit: {},
+    scan: {},
+    companyJobs: {},
+    companyJobsLoading: {},
+    dailyRunChecked: false,
+  });
+}
+
+function showAuthScreen(message = "") {
+  setAppVisibility(false);
+  const status = document.getElementById("authStatus");
+  if (status) status.textContent = message;
+  const accountBox = document.getElementById("accountBox");
+  if (accountBox) accountBox.hidden = true;
+}
+
+function showAppScreen() {
+  setAppVisibility(true);
+  const accountBox = document.getElementById("accountBox");
+  const accountEmail = document.getElementById("accountEmail");
+  if (accountBox) accountBox.hidden = !state.auth.config?.auth_required;
+  if (accountEmail) accountEmail.textContent = state.auth.session?.user?.email || "已登录";
+}
+
+async function initAuth() {
+  state.auth.config = await api("/api/auth/config");
+  if (!state.auth.config.auth_required) {
+    showAppScreen();
+    return true;
+  }
+  if (!window.supabase?.createClient) {
+    showAuthScreen("登录组件暂时没有加载出来，请刷新页面。");
+    return false;
+  }
+  if (!state.auth.config.supabase_url || !state.auth.config.supabase_anon_key) {
+    showAuthScreen("服务器还没有配置登录服务。");
+    return false;
+  }
+  state.auth.client = window.supabase.createClient(state.auth.config.supabase_url, state.auth.config.supabase_anon_key);
+  const { data } = await state.auth.client.auth.getSession();
+  state.auth.session = data.session || null;
+  state.auth.userId = state.auth.session?.user?.id || "";
+  state.auth.client.auth.onAuthStateChange(async (_event, session) => {
+    const nextUserId = session?.user?.id || "";
+    const changedUser = nextUserId !== state.auth.userId;
+    state.auth.session = session || null;
+    state.auth.userId = nextUserId;
+    if (!session) {
+      resetPrivateState();
+      showAuthScreen("已退出登录。");
+      return;
+    }
+    showAppScreen();
+    if (changedUser) {
+      resetPrivateState();
+      await refresh();
+      await checkDailyAutoRun();
+    }
+  });
+  if (!state.auth.session) {
+    showAuthScreen("");
+    return false;
+  }
+  showAppScreen();
+  return true;
 }
 
 function escapeHtml(value) {
@@ -361,6 +456,52 @@ function formatDateTime(value) {
   return value.replace("T", " ");
 }
 
+function dateToTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  const normalized = text.length === 10 ? `${text}T00:00:00` : text;
+  const time = new Date(normalized).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function daysSince(value) {
+  const time = dateToTime(value);
+  if (!time) return 9999;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const date = new Date(time);
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  return Math.max(0, Math.floor((today - day) / 86400000));
+}
+
+function freshnessInfo(job) {
+  const foundDays = daysSince(job.found_date);
+  const updatedDays = daysSince(job.updated_at || job.last_checked_at || job.batch_date);
+  if (foundDays === 0) return { label: "今日新增", className: "fresh" };
+  if (foundDays <= 2) return { label: `${foundDays} 天内新增`, className: "fresh" };
+  if (foundDays <= 7) return { label: "本周新增", className: "recent" };
+  if (updatedDays === 0) return { label: "今日刷新", className: "recent" };
+  if (updatedDays <= 7) return { label: "本周刷新", className: "recent" };
+  return { label: "旧岗位", className: "stale" };
+}
+
+function freshnessWeight(job) {
+  const foundDays = daysSince(job.found_date);
+  const updatedDays = daysSince(job.updated_at || job.last_checked_at || job.batch_date);
+  if (foundDays === 0) return 1.25;
+  if (foundDays <= 2) return 1.05;
+  if (foundDays <= 7) return 0.72;
+  if (updatedDays === 0) return 0.45;
+  if (updatedDays <= 7) return 0.28;
+  return 0;
+}
+
+function generalJobRank(job) {
+  const score = Number(job.score || job.base_score || 0);
+  const rankScore = Number(job.rank_score || score);
+  return (score * 10) + (rankScore * 1.4) + (freshnessWeight(job) * 7);
+}
+
 function employmentTypeLabel(value) {
   return {
     Internship: "实习",
@@ -607,9 +748,16 @@ function jobCard(job, compact = false, options = {}) {
   const score = Number(job.score || job.base_score || 0);
   const rankScore = Number(job.rank_score || score);
   const notes = options.fit && job.fit_reasons?.length ? job.fit_reasons.join(" | ") : job.match_notes;
+  const freshness = freshnessInfo(job);
+  const freshnessBadge = `<span class="badge freshness-badge ${freshness.className}">${escapeHtml(freshness.label)}</span>`;
+  const dateMeta = [
+    `发现 ${job.found_date || "-"}`,
+    `更新 ${(job.updated_at || job.last_checked_at || "").slice(0, 10) || "-"}`,
+    job.applied_date ? `投递 ${job.applied_date}` : "",
+  ].filter(Boolean).join(" · ");
 
   return `
-    <article class="job-card" data-job-id="${job.id}">
+    <article class="job-card freshness-${escapeHtml(freshness.className)}" data-job-id="${job.id}">
       <div>
         <div class="job-title-row">
           <h3>
@@ -619,8 +767,9 @@ function jobCard(job, compact = false, options = {}) {
           </h3>
           <span class="badge">${escapeHtml(statusLabel(job.status))}</span>
           <span class="badge">${escapeHtml(job.source)}</span>
+          ${freshnessBadge}
         </div>
-        <div class="job-meta">推荐日期 ${escapeHtml(job.batch_date || "-")} · 发现日期 ${escapeHtml(job.found_date || "-")} · 投递日期 ${escapeHtml(job.applied_date || "-")}</div>
+        <div class="job-meta">${escapeHtml(dateMeta)}</div>
         <div class="badge-row">${regionBadge}${employmentBadge}${conversionBadge}${salaryBadge}${fitBadge}${companyBadge}${aiBadge}${matched}${badges}${draftLinks}</div>
         <a class="job-url" href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">${escapeHtml(job.url)}</a>
         ${options.ai && job.ai_match_notes ? `<p class="small-text">${escapeHtml(job.ai_match_notes)}</p>` : ""}
@@ -636,7 +785,7 @@ function jobCard(job, compact = false, options = {}) {
       <div class="score">
         <span class="badge good">${scoreTone(score)}</span>
         <strong>${(options.fit ? rankScore : score).toFixed(1)}</strong>
-        <span class="small-text">${options.fit ? "排序分" : "/ 5.0"}</span>
+        <span class="small-text">${options.fit ? "排序分" : options.general ? "新鲜高分" : "/ 5.0"}</span>
       </div>
     </article>
   `;
@@ -827,13 +976,17 @@ function renderRecommendationContext() {
 }
 
 function renderJobs() {
-  const aiIds = new Set(state.aiJobs.map((job) => job.id));
   const fitJobs = (state.recommendations.jobs || []).filter((job) => isRecommendationCandidate(job)).slice(0, 20);
   const aiJobs = state.aiJobs.filter((job) => isRecommendationCandidate(job)).slice(0, 20);
   const visible = state.jobs
-    .filter((job) => !state.activeFilter ? isRecommendationCandidate(job) : job.status === state.activeFilter)
-    .filter((job) => !aiIds.has(job.id));
-  const generalJobs = visible.slice(0, 20);
+    .filter((job) => !state.activeFilter ? isRecommendationCandidate(job) : job.status === state.activeFilter);
+  const generalJobs = [...visible]
+    .sort((a, b) =>
+      generalJobRank(b) - generalJobRank(a)
+      || Number(b.score || 0) - Number(a.score || 0)
+      || dateToTime(b.found_date || b.updated_at) - dateToTime(a.found_date || a.updated_at)
+    )
+    .slice(0, 20);
 
   document.querySelectorAll("[data-recommendation-view]").forEach((button) => {
     button.classList.toggle("active", button.dataset.recommendationView === state.recommendationView);
@@ -851,16 +1004,35 @@ function renderJobs() {
   generalList.hidden = state.recommendationView !== "general";
   fitList.innerHTML = fitJobs.length ? fitJobs.map((job) => jobCard(job, false, { fit: true })).join("") : emptyState("还没有可推荐岗位。先扫描或设置职业定位。");
   aiList.innerHTML = aiJobs.length ? aiJobs.map((job) => jobCard(job, false, { ai: true })).join("") : emptyState("暂时没有 3.0 分以上的 AI 相关岗位。");
-  generalList.innerHTML = generalJobs.length ? generalJobs.map((job) => jobCard(job)).join("") : emptyState("还没有岗位。请点击开始自动扫描。");
+  generalList.innerHTML = generalJobs.length ? generalJobs.map((job) => jobCard(job, false, { general: true })).join("") : emptyState("还没有岗位。请点击开始自动扫描。");
 
-  const queue = state.jobs.filter((job) => job.status === "Apply Queue");
+  const queue = state.jobs
+    .filter((job) => job.status === "Apply Queue")
+    .sort((a, b) =>
+      dateToTime(b.updated_at || b.batch_date || b.found_date) - dateToTime(a.updated_at || a.batch_date || a.found_date)
+      || Number(b.score || 0) - Number(a.score || 0)
+    );
+  const today = state.summary.date || new Date().toISOString().slice(0, 10);
+  const todayApplied = state.jobs.filter((job) => job.status === "Applied" && job.applied_date === today);
   document.getElementById("queueList").innerHTML = queue.length
-    ? queue.slice(0, 15).map((job) => jobCard(job, true)).join("")
+    ? queue.map((job) => jobCard(job, true)).join("")
     : emptyState("投递队列为空。你可以从今日推荐里选择“加入投递”。");
-  document.getElementById("queueMiniCount").textContent = queue.length;
-  document.getElementById("queueMiniList").innerHTML = queue.length
-    ? queue.slice(0, 5).map((job) => `<div class="mini-item"><strong>${escapeHtml(job.company)}</strong><span class="small-text">${escapeHtml(job.position)}</span></div>`).join("")
-    : `<div class="mini-item"><span class="small-text">还没有待投递岗位。</span></div>`;
+  const queueListStatus = document.getElementById("queueListStatus");
+  if (queueListStatus) queueListStatus.textContent = `${queue.length} 个待投递 · 已完整显示`;
+  document.getElementById("queueMiniCount").textContent = `${queue.length} 队列 · ${todayApplied.length} 已投`;
+  const queuePreview = queue.slice(0, 4).map((job) => `<div class="mini-item"><strong>${escapeHtml(job.company)}</strong><span class="small-text">${escapeHtml(job.position)}</span></div>`).join("");
+  const appliedPreview = todayApplied.slice(0, 5).map((job) => `<div class="mini-item applied-mini-item"><strong>${escapeHtml(job.company)}</strong><span class="small-text">${escapeHtml(job.position)}</span></div>`).join("");
+  document.getElementById("queueMiniList").innerHTML = `
+    <div class="mini-group">
+      <div class="mini-group-title">待投递预览</div>
+      ${queuePreview || `<div class="mini-item"><span class="small-text">还没有待投递岗位。</span></div>`}
+      ${queue.length > 4 ? `<button class="tertiary-button compact-button mini-nav-button" type="button" data-nav-queue>查看全部 ${queue.length} 个</button>` : ""}
+    </div>
+    <div class="mini-group">
+      <div class="mini-group-title">今日已投</div>
+      ${appliedPreview || `<div class="mini-item"><span class="small-text">今天还没有确认已投递。</span></div>`}
+    </div>
+  `;
 
   renderTrackerRows();
 }
@@ -868,6 +1040,7 @@ function renderJobs() {
 function filterTrackerJobs() {
   return state.jobs
     .filter((job) => {
+      if (state.trackerStatus !== "all" && job.status !== state.trackerStatus) return false;
       const dates = trackerDates(job);
       if (state.trackerMode === "day") return dates.includes(state.trackerDate);
       if (state.trackerMode === "month") return dates.some((date) => date.startsWith(state.trackerMonth));
@@ -880,6 +1053,9 @@ function renderTrackerControls(filteredCount) {
   document.querySelectorAll(".tracker-mode-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.trackerMode === state.trackerMode);
   });
+  document.querySelectorAll(".tracker-status-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.trackerStatus === state.trackerStatus);
+  });
   const dateLabel = document.getElementById("trackerDateLabel");
   const monthLabel = document.getElementById("trackerMonthLabel");
   const dateInput = document.getElementById("trackerDateInput");
@@ -890,7 +1066,8 @@ function renderTrackerControls(filteredCount) {
   monthLabel.hidden = state.trackerMode !== "month";
   dateInput.disabled = state.trackerMode !== "day";
   monthInput.disabled = state.trackerMode !== "month";
-  const label = state.trackerMode === "day" ? `${state.trackerDate} 的岗位` : state.trackerMode === "month" ? `${state.trackerMonth} 整月岗位` : "全部岗位";
+  const statusLabelText = state.trackerStatus === "Applied" ? "已投递岗位" : "岗位";
+  const label = state.trackerMode === "day" ? `${state.trackerDate} 的${statusLabelText}` : state.trackerMode === "month" ? `${state.trackerMonth} 整月${statusLabelText}` : `全部${statusLabelText}`;
   document.getElementById("trackerCount").textContent = `${label}：${filteredCount}/${state.jobs.length}`;
 }
 
@@ -913,20 +1090,34 @@ function renderTrackerRows() {
     : `<tr><td colspan="8">这个时间范围里还没有岗位记录。</td></tr>`;
 }
 
-function aliasesForCompany(company) {
-  return COMPANY_ALIASES[company] || [company];
+function jobsForCompany(company) {
+  return state.companyJobs?.[company]?.jobs || [];
 }
 
-function jobsForCompany(company) {
-  const aliases = aliasesForCompany(company).map((item) => item.toLowerCase());
-  return state.jobs
-    .filter((job) => aliases.some((alias) => `${job.company} ${job.name}`.toLowerCase().includes(alias)))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 20);
+function companyJobCount(company) {
+  return Number(state.companyJobs?.[company]?.matched_jobs_count ?? companyByName(company)?.matched_jobs_count ?? 0);
 }
 
 function companyByName(companyName) {
   return [...(state.watchlist || []), ...(state.companyCatalog || [])].find((item) => item.company === companyName);
+}
+
+async function loadCompanyJobs(companyName) {
+  if (!companyName || state.companyJobs[companyName] || state.companyJobsLoading[companyName]) return;
+  state.companyJobsLoading[companyName] = true;
+  const company = companyByName(companyName) || {};
+  const params = new URLSearchParams(regionQuery());
+  params.set("company", companyName);
+  if (company.id) params.set("company_id", company.id);
+  try {
+    state.companyJobs[companyName] = await api(`/api/company-jobs?${params.toString()}`);
+  } catch (error) {
+    toast(error.message, "error");
+    state.companyJobs[companyName] = { company: companyName, jobs: [], matched_jobs_count: 0, last_scan_note: "加载公司岗位失败。" };
+  } finally {
+    delete state.companyJobsLoading[companyName];
+    renderWatchlist();
+  }
 }
 
 function companyRow(company, config = {}) {
@@ -937,7 +1128,7 @@ function companyRow(company, config = {}) {
     ...(company.tags || []).slice(0, 2),
     company.language_signal || "",
   ].filter(Boolean);
-  const jobs = jobsForCompany(company.company);
+  const jobsCount = companyJobCount(company.company);
   return `
     <article class="company-row ${state.selectedCompany === company.company ? "active" : ""}" data-company="${escapeHtml(company.company)}">
       <button class="company-select" type="button" data-company="${escapeHtml(company.company)}">
@@ -947,7 +1138,7 @@ function companyRow(company, config = {}) {
         </span>
         <span class="company-row-meta">
           ${tags.slice(0, 3).map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join("")}
-          <span class="badge fit-badge">${jobs.length} 岗位</span>
+          <span class="badge fit-badge">${jobsCount} 岗位</span>
         </span>
       </button>
       <div class="company-row-actions">
@@ -976,9 +1167,21 @@ function renderCompanyJobs() {
   }
   const company = companyByName(state.selectedCompany) || {};
   const isWatched = (state.watchlist || []).some((item) => item.company === state.selectedCompany);
+  if (!state.companyJobs[state.selectedCompany] && !state.companyJobsLoading[state.selectedCompany]) {
+    loadCompanyJobs(state.selectedCompany);
+  }
+  const payload = state.companyJobs[state.selectedCompany] || {};
   const jobs = jobsForCompany(state.selectedCompany);
+  const loading = Boolean(state.companyJobsLoading[state.selectedCompany]);
+  const totalCount = Number(payload.matched_jobs_count ?? company.matched_jobs_count ?? jobs.length);
+  const officialCount = jobs.filter((job) => job.company_match_source_group === "official").length || Number(company.matched_official_count || 0);
+  const publicCount = Math.max(0, totalCount - officialCount);
   title.textContent = `${state.selectedCompany} 相关岗位`;
-  if (detailText) detailText.textContent = `${jobs.length} 个本地已记录岗位 · ${isWatched ? "已关注，会进入官网浅扫描" : "推荐关注，可加入雷达"}`;
+  if (detailText) {
+    detailText.textContent = loading
+      ? "正在匹配官网、ATS 和公共来源岗位..."
+      : `${totalCount} 个匹配岗位 · 官网/ATS ${officialCount} · 公共来源 ${publicCount} · ${isWatched ? "已关注，会进入官网扫描" : "推荐关注，可加入雷达"}`;
+  }
   if (detail) {
     const badges = [
       company.company_type || company.source,
@@ -992,6 +1195,7 @@ function renderCompanyJobs() {
         <p>${escapeHtml(company.focus || "暂无方向说明。")}</p>
         <div class="badge-row">${badges.map((tag) => `<span class="badge ${String(tag).includes("AI") || String(tag).includes("产品") ? "fit-badge" : ""}">${escapeHtml(tag)}</span>`).join("")}</div>
         ${company.recommend_reason ? `<p class="company-reason">${escapeHtml(company.recommend_reason)}</p>` : ""}
+        ${(payload.last_scan_note || company.last_scan_note) ? `<p class="company-scan-note">${escapeHtml(payload.last_scan_note || company.last_scan_note)}</p>` : ""}
       </div>
     `;
   }
@@ -1003,7 +1207,16 @@ function renderCompanyJobs() {
         : `<button class="primary-button compact-button" data-watch-action="add-catalog" data-company="${escapeHtml(company.company || state.selectedCompany)}">关注</button>`}
     `;
   }
-  container.innerHTML = jobs.length ? jobs.map((job) => jobCard(job)).join("") : emptyState("暂时没有抓到这家公司可展示岗位。");
+  if (loading) {
+    container.innerHTML = emptyState("正在加载这家公司匹配岗位...");
+  } else if (jobs.length) {
+    container.innerHTML = jobs.map((job) => jobCard({
+      ...job,
+      source: job.company_match_source_label || job.source,
+    })).join("");
+  } else {
+    container.innerHTML = emptyState(payload.last_scan_note || company.last_scan_note || "暂时没有抓到这家公司可展示岗位。");
+  }
 }
 
 function renderWatchlist() {
@@ -1056,12 +1269,13 @@ async function renderNotionSchema() {
         <p>${escapeHtml(field.purpose)}</p>
       </article>
     `).join("");
-    const tokenLabel = status.token_configured ? "Token 已写入本地配置" : "缺少 Notion token";
-    const databaseLabel = status.database_id_configured ? "Database ID 已写入本地配置" : "缺少 database ID";
+    const tokenLabel = status.token_configured ? "Token 已配置" : "缺少 Notion token";
+    const databaseLabel = status.database_id_configured ? "Database ID 已配置" : "缺少 database ID";
+    const sourceLabel = status.source === "user" ? "当前账号配置" : (status.source === "env" ? "本地开发配置" : "未配置");
     document.getElementById("notionConfigStatus").innerHTML = `
       <span class="config-pill ${status.token_configured ? "ok" : "warn"}">${escapeHtml(tokenLabel)}</span>
       <span class="config-pill ${status.database_id_configured ? "ok" : "warn"}">${escapeHtml(databaseLabel)}</span>
-      <span class="small-text">${status.env_file ? "配置文件：" + escapeHtml(status.env_file) : "还没有本地配置文件"}</span>
+      <span class="small-text">${escapeHtml(sourceLabel)}${status.updated_at ? " · " + escapeHtml(status.updated_at) : ""}</span>
     `;
     document.getElementById("notionSchema").innerHTML = required + `
       <article class="schema-item">
@@ -1071,6 +1285,23 @@ async function renderNotionSchema() {
     `;
   } catch (error) {
     document.getElementById("notionSchema").innerHTML = emptyState(error.message);
+  }
+}
+
+async function submitNotionConfig(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form).entries());
+  const statusNode = document.getElementById("notionConfigSaveStatus");
+  statusNode.textContent = "保存中...";
+  try {
+    await api("/api/notion-config", { method: "POST", body: JSON.stringify(payload) });
+    form.reset();
+    statusNode.textContent = "已保存当前账号的 Notion 配置。";
+    await renderNotionSchema();
+  } catch (error) {
+    statusNode.textContent = error.message;
+    toast(error.message, "error");
   }
 }
 
@@ -1116,6 +1347,8 @@ async function refresh() {
   state.recommendations = recommendations;
   state.scan = scanStatus;
   state.companyCatalog = companyCatalog;
+  state.companyJobs = {};
+  state.companyJobsLoading = {};
   setTrackerDefaults();
   renderUserContextControls();
   renderMetrics();
@@ -1385,6 +1618,8 @@ async function refreshFocusData(message = "推荐已按新画像重排。") {
     state.scan = scanStatus;
     state.watchlist = watchlist;
     state.companyCatalog = companyCatalog;
+    state.companyJobs = {};
+    state.companyJobsLoading = {};
     renderUserContextControls();
     renderMetrics();
     renderScanRun(scanStatus);
@@ -1687,6 +1922,34 @@ async function syncNotion(event) {
   }, "已同步");
 }
 
+async function submitAuth(event) {
+  event.preventDefault();
+  if (!state.auth.client) {
+    showAuthScreen("登录服务还没有准备好，请刷新页面。");
+    return;
+  }
+  const email = document.getElementById("authEmail").value.trim();
+  if (!email) return;
+  const status = document.getElementById("authStatus");
+  if (status) status.textContent = "正在发送登录链接...";
+  const { error } = await state.auth.client.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin },
+  });
+  if (error) {
+    if (status) status.textContent = error.message;
+    toast(error.message, "error");
+    return;
+  }
+  if (status) status.textContent = "登录链接已发送，请去邮箱点击后回到这里。";
+  toast("登录链接已发送。", "success");
+}
+
+async function signOut() {
+  if (!state.auth.client) return;
+  await state.auth.client.auth.signOut();
+}
+
 function showView(view) {
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
@@ -1725,6 +1988,8 @@ function syncSalaryPeriodControls(scope) {
 }
 
 function bindEvents() {
+  document.getElementById("authForm")?.addEventListener("submit", submitAuth);
+  document.getElementById("signOutBtn")?.addEventListener("click", signOut);
   document.getElementById("jobForm").addEventListener("submit", submitJob);
   document.getElementById("profileForm").addEventListener("submit", submitProfile);
   document.getElementById("contextForm").addEventListener("submit", submitUserContext);
@@ -1755,6 +2020,7 @@ function bindEvents() {
   document.getElementById("scanBtn").addEventListener("click", scanJobs);
   document.getElementById("reportBtn").addEventListener("click", makeReport);
   document.getElementById("notionSyncBtn").addEventListener("click", syncNotion);
+  document.getElementById("notionConfigForm")?.addEventListener("submit", submitNotionConfig);
   document.getElementById("localAnalyzeBtn").addEventListener("click", (event) => analyzeCareerFit("local", event.currentTarget));
   document.getElementById("aiAnalyzeBtn").addEventListener("click", (event) => analyzeCareerFit("ai", event.currentTarget));
   document.getElementById("closeDialog").addEventListener("click", () => document.getElementById("detailDialog").close());
@@ -1764,6 +2030,10 @@ function bindEvents() {
   document.body.addEventListener("click", handleOptionChip);
   document.body.addEventListener("click", (event) => {
     if (event.target.closest("[data-nav-fit]")) showView("fit");
+    if (event.target.closest("[data-nav-queue]")) {
+      showView("queue");
+      return;
+    }
     const miniCompany = event.target.closest("[data-company-mini]");
     if (miniCompany) {
       state.selectedCompany = miniCompany.dataset.companyMini;
@@ -1805,6 +2075,12 @@ function bindEvents() {
       renderJobs();
     });
   });
+  document.querySelectorAll(".tracker-status-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.trackerStatus = button.dataset.trackerStatus;
+      renderJobs();
+    });
+  });
   document.getElementById("trackerDateInput").addEventListener("change", (event) => {
     state.trackerDate = event.target.value;
     state.trackerMode = "day";
@@ -1819,6 +2095,8 @@ function bindEvents() {
 
 async function boot() {
   bindEvents();
+  const ready = await initAuth();
+  if (!ready) return;
   await refresh();
   await checkDailyAutoRun();
 }

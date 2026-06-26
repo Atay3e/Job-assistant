@@ -21,6 +21,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
 
+try:
+    import jwt
+except ImportError:  # pragma: no cover - only required when Supabase auth is enabled.
+    jwt = None
+
 
 APP_DIR = Path(__file__).parent.absolute()
 
@@ -63,6 +68,10 @@ APP_HOST = os.environ.get("JOB_ASSISTANT_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("PORT") or os.environ.get("JOB_ASSISTANT_PORT", "8787"))
 NOTION_VERSION = os.environ.get("NOTION_VERSION", "2022-06-28")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+LOCAL_USER_ID = os.environ.get("JOB_ASSISTANT_LOCAL_USER_ID", "local-owner")
+REQUEST_CONTEXT = threading.local()
+INITIALIZED_DB_PATHS: set[str] = set()
+DB_INIT_LOCK = threading.RLock()
 
 DATE_FMT = "%Y-%m-%d"
 
@@ -82,7 +91,7 @@ STATUS_VALUES = {
 }
 
 AI_RESUME_HEADLINE = "AI-Enabled Product, UX, and Service Design Candidate"
-SCAN_THREADS: dict[int, threading.Thread] = {}
+SCAN_THREADS: dict[str, threading.Thread] = {}
 SCAN_THREADS_LOCK = threading.Lock()
 
 AI_PROFILE_SIGNAL = (
@@ -477,6 +486,496 @@ COMPANY_CATALOG = [
         "default_watch": False,
     },
     {
+        "region": "SG",
+        "company": "Flowmingo AI",
+        "source": "Company Site",
+        "url": "https://flowmingo.ai/careers",
+        "focus": "AI hiring platform, product UX, growth, marketing, operations",
+        "company_type": "AI Startup",
+        "city_tags": ["Singapore", "Remote"],
+        "tags": ["AI", "高潜力初创", "实习"],
+        "language_signal": "English first",
+        "recommend_reason": "AI 招聘产品和候选人体验场景直接，适合讲 AI-native UX、增长和招聘流程自动化。",
+        "priority": 89,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "X0PA AI",
+        "source": "Company Site",
+        "url": "https://x0pa.com/career/",
+        "focus": "Responsible AI hiring, product, customer success, data, HR tech",
+        "company_type": "AI / HR Tech",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "B2B SaaS"],
+        "language_signal": "English first",
+        "recommend_reason": "AI 招聘与评估场景清晰，适合产品运营、UX research 和 B2B AI 方向。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "ViSenze",
+        "source": "Company Site",
+        "url": "https://apply.workable.com/visenze/?lng=en",
+        "focus": "Visual AI, commerce search, recommendation, product, data",
+        "company_type": "AI / Commerce Search",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "电商"],
+        "language_signal": "English first",
+        "recommend_reason": "视觉搜索和推荐系统场景强，适合 AI product、UX 和数据相关岗位。",
+        "priority": 83,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "PixCap",
+        "source": "Company Site",
+        "url": "https://jobs.surgeahead.com/jobs/pixcap",
+        "focus": "3D design tools, AI design workflow, product, frontend, creative tooling",
+        "company_type": "Design / AI Tooling",
+        "city_tags": ["Singapore", "Remote"],
+        "tags": ["设计与产品", "AI", "高潜力初创"],
+        "language_signal": "English first",
+        "recommend_reason": "3D 与 AI 创作工具，和产品设计、前端体验、创意工具方向贴合。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "ShopBack",
+        "source": "Company Site",
+        "url": "https://jobs.lever.co/shopback-2",
+        "focus": "Consumer growth, rewards, payments, data, marketing, product",
+        "company_type": "Consumer / Fintech",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "实习", "增长"],
+        "language_signal": "English first",
+        "recommend_reason": "新加坡成长起来的消费平台，数据、增长、产品和实习岗位较多。",
+        "priority": 88,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Syfe",
+        "source": "Company Site",
+        "url": "https://syfe.careers-page.com/",
+        "focus": "WealthTech, operations, product, investment, analytics, internships",
+        "company_type": "WealthTech",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "实习"],
+        "language_signal": "English first",
+        "recommend_reason": "数字财富管理产品，适合运营、分析、产品和金融科技实习方向。",
+        "priority": 83,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Endowus",
+        "source": "Company Site",
+        "url": "https://endowus.com/careers",
+        "focus": "Wealth management, product, operations, customer experience, content",
+        "company_type": "WealthTech",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "本地标杆"],
+        "language_signal": "English first",
+        "recommend_reason": "财富科技和复杂服务体验强，适合产品、内容、运营和客户旅程方向。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "StashAway",
+        "source": "Company Site",
+        "url": "https://www.stashaway.sg/careers",
+        "focus": "Digital wealth, product, growth, client experience, analytics",
+        "company_type": "WealthTech",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "增长"],
+        "language_signal": "English first",
+        "recommend_reason": "数字投顾和用户教育场景清晰，适合 UX、内容、增长和产品运营。",
+        "priority": 81,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Carousell Group",
+        "source": "Company Site",
+        "url": "https://careers.smartrecruiters.com/carousellgroup",
+        "focus": "Marketplace, trust and safety, consumer product, data, operations",
+        "company_type": "Marketplace",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "产品"],
+        "language_signal": "English first",
+        "recommend_reason": "本地 marketplace 场景丰富，适合讲交易体验、信任安全和用户增长。",
+        "priority": 85,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Airwallex",
+        "source": "Company Site",
+        "url": "https://jobs.ashbyhq.com/airwallex",
+        "focus": "Fintech infrastructure, payments, risk, product, operations, AI enablement",
+        "company_type": "Fintech / Payments",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "产品", "AI"],
+        "language_signal": "English first",
+        "recommend_reason": "跨境支付和金融基础设施岗位多，产品、风控、运营和数据方向都可看。",
+        "priority": 86,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Trust Bank",
+        "source": "Company Site",
+        "url": "https://trustbank.sg/careers/",
+        "focus": "Digital banking, product, customer experience, operations, marketing",
+        "company_type": "Digital Bank",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "本地标杆"],
+        "language_signal": "English first",
+        "recommend_reason": "数字银行服务体验完整，适合产品、运营、客户旅程和品牌增长方向。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Nansen",
+        "source": "Company Site",
+        "url": "https://job-boards.greenhouse.io/nansen",
+        "focus": "Onchain analytics, AI/data product, research, product design, growth",
+        "company_type": "Crypto / Data Intelligence",
+        "city_tags": ["Singapore", "Remote"],
+        "tags": ["AI", "数据", "高潜力初创"],
+        "language_signal": "English first",
+        "recommend_reason": "链上数据和 AI 情报产品场景强，适合数据产品、研究和增长方向。",
+        "priority": 81,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Transcelestial",
+        "source": "Company Site",
+        "url": "https://transcelestial.com/careers/",
+        "focus": "Space laser communications, product operations, systems, hardware-software experience",
+        "company_type": "DeepTech",
+        "city_tags": ["Singapore"],
+        "tags": ["高潜力初创", "硬件体验"],
+        "language_signal": "English first",
+        "recommend_reason": "深科技和复杂系统场景，适合讲系统体验、运营流程和跨团队协作。",
+        "priority": 77,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Una Brands",
+        "source": "Company Site",
+        "url": "https://www.una-brands.com/careers",
+        "focus": "E-commerce brands, growth, operations, corporate development, marketplace",
+        "company_type": "E-commerce Aggregator",
+        "city_tags": ["Singapore"],
+        "tags": ["出海", "电商", "中文友好概率较高"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "电商品牌运营和 APAC 场景，适合增长、运营、内容和跨境业务。",
+        "priority": 76,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Sleek",
+        "source": "Company Site",
+        "url": "https://apply.workable.com/careers-at-sleek/?lng=en",
+        "focus": "Business automation, fintech, operations, growth, AI-native content",
+        "company_type": "B2B SaaS / Fintech",
+        "city_tags": ["Singapore", "Remote"],
+        "tags": ["Fintech", "B2B SaaS", "实习"],
+        "language_signal": "English first",
+        "recommend_reason": "中小企业自动化和 fintech 场景，适合产品运营、内容、增长和实习方向。",
+        "priority": 80,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Aspire",
+        "source": "Company Site",
+        "url": "https://aspireapp.com/careers",
+        "focus": "B2B fintech, spend management, operations, product, partnerships",
+        "company_type": "Fintech / B2B",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "高潜力初创"],
+        "language_signal": "English first",
+        "recommend_reason": "B2B 金融操作系统，适合产品、运营、策略和客户旅程方向。",
+        "priority": 81,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Circles",
+        "source": "Company Site",
+        "url": "https://circles.co/careers",
+        "focus": "Digital telco, customer experience, product, growth, operations",
+        "company_type": "Digital Telco",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "产品"],
+        "language_signal": "English first",
+        "recommend_reason": "数字电信和订阅体验场景，适合产品运营、服务体验和增长方向。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Doctor Anywhere",
+        "source": "Company Site",
+        "url": "https://careers.smartrecruiters.com/DoctorAnywhere",
+        "focus": "HealthTech, data, product, operations, patient experience",
+        "company_type": "HealthTech",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "服务体验"],
+        "language_signal": "English first",
+        "recommend_reason": "医疗服务和数字健康场景，适合服务设计、运营和数据体验方向。",
+        "priority": 79,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Razer",
+        "source": "Company Site",
+        "url": "https://razer.wd3.myworkdayjobs.com/Careers",
+        "focus": "Gaming hardware, software, product, data, marketing, retail experience",
+        "company_type": "Gaming / Consumer Tech",
+        "city_tags": ["Singapore"],
+        "tags": ["产品", "消费科技"],
+        "language_signal": "English first",
+        "recommend_reason": "游戏硬件和生态产品丰富，适合产品、数据、市场和体验相关岗位。",
+        "priority": 80,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Canva",
+        "source": "Company Site",
+        "url": "https://www.lifeatcanva.com/en/",
+        "focus": "Design tools, content, product design, research, marketing, AI creative workflow",
+        "company_type": "Design Platform",
+        "city_tags": ["Singapore", "Remote"],
+        "tags": ["设计与产品", "AI"],
+        "language_signal": "English first",
+        "recommend_reason": "设计工具和 AI 创作工作流高度贴合 UX/product design 和内容方向。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Wise",
+        "source": "Company Site",
+        "url": "https://wise.jobs/",
+        "focus": "Payments, content design, product operations, analytics, compliance experience",
+        "company_type": "Fintech / Payments",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "内容设计"],
+        "language_signal": "English first",
+        "recommend_reason": "跨境金融产品复杂度高，适合 content design、运营、合规体验和产品方向。",
+        "priority": 83,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Crypto.com",
+        "source": "Company Site",
+        "url": "https://jobs.lever.co/crypto",
+        "focus": "Web3, security, product, operations, growth, compliance",
+        "company_type": "Crypto / Fintech",
+        "city_tags": ["Singapore", "Hong Kong"],
+        "tags": ["Fintech", "Web3"],
+        "language_signal": "English first",
+        "recommend_reason": "Web3 金融和安全运营岗位多，适合产品、运营、合规和增长方向。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "NodeFlair",
+        "source": "Company Site",
+        "url": "https://nodeflair.com/careers",
+        "focus": "Tech jobs platform, product, growth, content, community, data",
+        "company_type": "Career Tech",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "产品", "增长"],
+        "language_signal": "English first",
+        "recommend_reason": "技术招聘和薪资数据产品，适合产品运营、内容增长和求职生态相关经验。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Funding Societies",
+        "source": "Company Site",
+        "url": "https://apply.workable.com/fundingsocieties/",
+        "focus": "SME fintech, lending, operations, risk, customer experience, product",
+        "company_type": "Fintech / SME Lending",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "本地平台"],
+        "language_signal": "English first",
+        "recommend_reason": "东南亚 SME 金融场景清晰，适合产品、运营、风控和客户旅程方向。",
+        "priority": 83,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "YouTrip",
+        "source": "Company Site",
+        "url": "https://apply.workable.com/youtrip/?lng=en",
+        "focus": "Travel fintech, multi-currency wallet, product, growth, operations, marketing",
+        "company_type": "Fintech / Travel",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "实习", "增长"],
+        "language_signal": "English first",
+        "recommend_reason": "消费金融和旅行场景强，适合产品运营、增长、数据和市场实习方向。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "PropertyGuru Group",
+        "source": "Company Site",
+        "url": "https://propertyguru.wd105.myworkdayjobs.com/PropertyGuru",
+        "focus": "PropTech, marketplace, AI transformation, product, UX, fulfilment strategy",
+        "company_type": "PropTech / Marketplace",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "产品", "AI"],
+        "language_signal": "English first",
+        "recommend_reason": "本地房产平台和 marketplace 场景扎实，适合讲搜索、推荐、交易和 AI 转型。",
+        "priority": 85,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Ninja Van",
+        "source": "Company Site",
+        "url": "https://www.ninjavan.co/en-sg/company/careers",
+        "focus": "Logistics, business operations, product ops, data, service recovery",
+        "company_type": "Logistics / E-commerce Infrastructure",
+        "city_tags": ["Singapore"],
+        "tags": ["本地平台", "运营", "服务体验"],
+        "language_signal": "English first",
+        "recommend_reason": "物流和履约体验复杂，适合 product ops、service design、数据运营方向。",
+        "priority": 81,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "bolttech",
+        "source": "Company Site",
+        "url": "https://bolttech.io/careers/",
+        "focus": "Insurtech, platform partnerships, product, operations, customer experience",
+        "company_type": "Insurtech",
+        "city_tags": ["Singapore", "Hong Kong"],
+        "tags": ["Fintech", "平台"],
+        "language_signal": "English first",
+        "recommend_reason": "保险科技和平台合作场景，适合产品、商业运营和客户体验相关岗位。",
+        "priority": 79,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Accredify",
+        "source": "Company Site",
+        "url": "https://www.accredify.io/careers",
+        "focus": "Verifiable credentials, trust infrastructure, product, customer success, operations",
+        "company_type": "TrustTech / SaaS",
+        "city_tags": ["Singapore"],
+        "tags": ["B2B SaaS", "本地初创"],
+        "language_signal": "English first",
+        "recommend_reason": "数字凭证和信任基础设施场景清楚，适合 B2B 产品、运营和客户成功。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "EPOS",
+        "source": "Company Site",
+        "url": "https://www.epos.com.sg/careers-at-epos/",
+        "focus": "POS SaaS, AI product, product design, merchant operations, growth",
+        "company_type": "B2B SaaS / Local Commerce",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "产品", "实习"],
+        "language_signal": "English first",
+        "recommend_reason": "本地商户 SaaS 和 AI 产品岗位明确，适合 AI product、产品设计和运营实习。",
+        "priority": 83,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Ebb & Flow Group",
+        "source": "Company Site",
+        "url": "https://www.ebbflowgroup.com/careers",
+        "focus": "F&B brands, guest experience, brand marketing, operations, service design",
+        "company_type": "F&B / Experience Brand",
+        "city_tags": ["Singapore"],
+        "tags": ["服务体验", "品牌增长"],
+        "language_signal": "English first",
+        "recommend_reason": "如果想做服务体验、品牌和内容增长，这类线下体验品牌很适合练案例。",
+        "priority": 74,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "NCS",
+        "source": "Company Site",
+        "url": "https://www.ncs.co/careers/",
+        "focus": "AI services, public digital, consulting, data, product delivery, UX",
+        "company_type": "Tech Services / AI",
+        "city_tags": ["Singapore"],
+        "tags": ["AI", "本地标杆", "公共数字"],
+        "language_signal": "English first",
+        "recommend_reason": "AI 与公共数字服务岗位多，适合关注咨询、产品交付、数据和体验设计。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Moomoo Singapore",
+        "source": "Company Site",
+        "url": "https://apply.workable.com/moomoo/",
+        "focus": "Investment app, fintech, product, marketing, customer operations, data",
+        "company_type": "Fintech / Brokerage",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "中文友好概率较高"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "中资背景金融科技产品，适合产品运营、内容、市场和用户增长方向。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Holmusk",
+        "source": "Company Site",
+        "url": "https://www.holmusk.com/careers",
+        "focus": "Health data, AI analytics, research, product, clinical operations",
+        "company_type": "HealthTech / AI Data",
+        "city_tags": ["Singapore", "Remote"],
+        "tags": ["AI", "HealthTech", "数据"],
+        "language_signal": "English first",
+        "recommend_reason": "医疗数据和 AI 分析场景，适合研究、数据产品和复杂行业 UX。",
+        "priority": 79,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "M-DAQ",
+        "source": "Company Site",
+        "url": "https://www.m-daq.com/careers",
+        "focus": "Cross-border payments, FX, product, compliance, client experience",
+        "company_type": "Fintech / Payments",
+        "city_tags": ["Singapore"],
+        "tags": ["Fintech", "B2B"],
+        "language_signal": "English first",
+        "recommend_reason": "跨境支付和外汇产品复杂度高，适合产品、客户体验、合规和运营方向。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
         "region": "CN",
         "company": "ByteDance",
         "source": "Company Site",
@@ -655,7 +1154,7 @@ SOURCE_LIMITS = {
     "InternSG": 24,
     "Indeed": 12,
     "JobStreet": 24,
-    "Company Site": 24,
+    "Company Site": 80,
     "Google Jobs": 24,
     "LinkedIn AI": 18,
     "InternSG AI": 12,
@@ -775,6 +1274,89 @@ SCAN_SOURCE_MODES = {
     "JobsDB": "primary",
     "LinkedIn": "primary",
     "Mainland Public Search": "primary",
+}
+
+COMPANY_ALIAS_OVERRIDES = {
+    "advance.ai": ["ADVANCE.AI", "Advance AI", "Advance Intelligence Group", "advanceai"],
+    "ai singapore": ["AI Singapore", "AISG"],
+    "aichat": ["AiChat", "AI Chat"],
+    "bytedance": ["ByteDance", "TikTok"],
+    "changi airport group": ["Changi Airport Group", "Changi Airport", "CAG"],
+    "dbs": ["DBS", "DBS Bank"],
+    "foodpanda singapore": ["foodpanda Singapore", "foodpanda"],
+    "grab": ["Grab", "Grab Singapore"],
+    "horizon labs": ["Horizon Labs", "Horizon Labs SG"],
+    "hypotenuse ai": ["Hypotenuse AI", "Hypotenuse"],
+    "ikea singapore": ["IKEA Singapore", "IKEA"],
+    "k-id": ["k-ID", "k ID", "kID"],
+    "lazada": ["Lazada", "Lazada Singapore"],
+    "muji singapore": ["MUJI Singapore", "MUJI"],
+    "patsnap": ["PatSnap", "Patsnap"],
+    "pdd": ["PDD", "Pinduoduo", "Temu"],
+    "pop mart singapore": ["POP MART Singapore", "POP MART", "Popmart"],
+    "sea": ["Sea", "Sea Group", "Shopee", "Garena"],
+    "shopee": ["Shopee", "Shopee Singapore", "SeaMoney"],
+    "tencent singapore": ["Tencent Singapore", "Tencent"],
+    "trip.com group": ["Trip.com Group", "Trip.com", "Ctrip"],
+    "wiz.ai": ["WIZ.AI", "WIZ AI", "WIZ HOLDINGS", "WIZ HOLDINGS PTE LTD", "Wiz Holdings"],
+    "flowmingo ai": ["Flowmingo AI", "Flowmingo", "Featurii"],
+    "x0pa ai": ["X0PA AI", "X0PA"],
+    "visenze": ["ViSenze", "ViSenze AI", "Rezolve Ai"],
+    "pixcap": ["PixCap", "Pixcap"],
+    "shopback": ["ShopBack", "ShopBack Pay"],
+    "syfe": ["Syfe"],
+    "endowus": ["Endowus"],
+    "stashaway": ["StashAway"],
+    "carousell group": ["Carousell Group", "Carousell"],
+    "airwallex": ["Airwallex"],
+    "trust bank": ["Trust Bank", "Trust Singapore", "Trust"],
+    "nansen": ["Nansen", "Nansen.ai"],
+    "transcelestial": ["Transcelestial", "Transcelestial Technologies"],
+    "una brands": ["Una Brands"],
+    "sleek": ["Sleek"],
+    "aspire": ["Aspire", "Aspire App"],
+    "circles": ["Circles", "Circles.Life", "Circles Life"],
+    "doctor anywhere": ["Doctor Anywhere"],
+    "razer": ["Razer"],
+    "canva": ["Canva"],
+    "wise": ["Wise", "Wise Payments"],
+    "crypto.com": ["Crypto.com", "Crypto Com"],
+    "nodeflair": ["NodeFlair", "Nodeflair"],
+    "funding societies": ["Funding Societies", "Funding Societies | Modalku", "Modalku"],
+    "youtrip": ["YouTrip", "YouTrip Singapore"],
+    "propertyguru group": ["PropertyGuru Group", "PropertyGuru"],
+    "ninja van": ["Ninja Van", "NinjaVan"],
+    "bolttech": ["bolttech", "Bolttech"],
+    "accredify": ["Accredify"],
+    "epos": ["EPOS", "EPOS Pte Ltd", "Epos"],
+    "ebb & flow group": ["Ebb & Flow Group", "Ebb Flow", "EBB & FLOW PTE. LTD."],
+    "ncs": ["NCS", "NCS Group", "NCS PTE. LTD."],
+    "moomoo singapore": ["Moomoo Singapore", "Moomoo", "Futu", "Moomoo Financial Singapore"],
+    "holmusk": ["Holmusk"],
+    "m-daq": ["M-DAQ", "M-DAQ Global", "M DAQ"],
+}
+
+COMPANY_SCAN_ROLE_PATTERN = re.compile(
+    r"\b(intern|internship|graduate|associate|junior|entry level|ux|ui|user research|design|designer|"
+    r"product|operations|analyst|content|marketing|growth|customer success|project|programme|program|ai|"
+    r"machine learning|data|research|service)\b",
+    flags=re.I,
+)
+
+COMPANY_CAREER_LINK_PATTERN = re.compile(
+    r"(career|job|jobs|opening|openings|join-us|join us|position|positions|vacanc|work-with-us|greenhouse|lever|ashby|workday|smartrecruiters|workable|bamboohr|careers-page|surgeahead)",
+    flags=re.I,
+)
+
+COMPANY_SCAN_PAGE_CAP = 5
+COMPANY_SCAN_PER_COMPANY_CAP = 6
+COMPANY_SCAN_TIMEOUT = 10
+COMPANY_SCAN_SOURCE_LABELS = {
+    "Company Site": "官网 / ATS",
+    "Company Site / ATS": "官网 / ATS",
+    "LinkedIn": "LinkedIn 匹配",
+    "JobStreet": "JobStreet 匹配",
+    "Google Jobs": "Google Jobs 匹配",
 }
 
 AI_EXPLICIT_KEYWORDS = [
@@ -933,35 +1515,200 @@ def now_iso() -> str:
     return dt.datetime.now().replace(microsecond=0).isoformat()
 
 
+def truthy_env(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def supabase_auth_configured() -> bool:
+    return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_ANON_KEY"))
+
+
+def auth_required() -> bool:
+    return truthy_env("JOB_ASSISTANT_REQUIRE_AUTH") or supabase_auth_configured()
+
+
+def auth_config_payload() -> dict:
+    return {
+        "auth_required": auth_required(),
+        "supabase_url": os.environ.get("SUPABASE_URL", ""),
+        "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+    }
+
+
+class AuthError(ValueError):
+    pass
+
+
+def safe_user_id(user_id: str | None) -> str:
+    value = (user_id or LOCAL_USER_ID).strip() or LOCAL_USER_ID
+    cleaned = re.sub(r"[^A-Za-z0-9_.@-]+", "-", value).strip(".-")
+    if cleaned:
+        return cleaned[:120]
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+
+
+def request_user_id() -> str:
+    return getattr(REQUEST_CONTEXT, "user_id", LOCAL_USER_ID) or LOCAL_USER_ID
+
+
+def scoped_storage_enabled() -> bool:
+    return auth_required() or request_user_id() != LOCAL_USER_ID
+
+
+def current_data_dir() -> Path:
+    if scoped_storage_enabled():
+        return DATA_DIR / "users" / safe_user_id(request_user_id())
+    return DATA_DIR
+
+
+def current_workspace_dir() -> Path:
+    if scoped_storage_enabled():
+        return WORKSPACE_DIR / "users" / safe_user_id(request_user_id())
+    return WORKSPACE_DIR
+
+
+def current_db_path() -> Path:
+    return current_data_dir() / "career_copilot.sqlite" if scoped_storage_enabled() else DB_PATH
+
+
+def current_profile_path() -> Path:
+    return current_data_dir() / "profile.json" if scoped_storage_enabled() else PROFILE_PATH
+
+
+def current_user_context_path() -> Path:
+    return current_data_dir() / "user_context.json" if scoped_storage_enabled() else USER_CONTEXT_PATH
+
+
+def current_apply_assist_dir() -> Path:
+    return current_data_dir() / "apply-assist" if scoped_storage_enabled() else APPLY_ASSIST_DIR
+
+
+def current_browser_profile_dir() -> Path:
+    return current_data_dir() / "browser-profile" if scoped_storage_enabled() else BROWSER_PROFILE_DIR
+
+
+def current_resume_upload_dir() -> Path:
+    return current_data_dir() / "resumes" if scoped_storage_enabled() else RESUME_UPLOAD_DIR
+
+
+def current_default_resume_pdf() -> Path:
+    return current_resume_upload_dir() / "active-resume.pdf"
+
+
+def current_resume_path() -> Path:
+    configured = os.environ.get("JOB_ASSISTANT_RESUME")
+    return Path(configured).expanduser() if configured else current_default_resume_pdf()
+
+
+def current_profile_photo_path() -> Path:
+    return current_resume_upload_dir() / "profile-photo.jpg"
+
+
+def current_notion_config_path() -> Path:
+    return current_data_dir() / "notion_config.json"
+
+
+@contextmanager
+def request_user_context(user_id: str):
+    previous = getattr(REQUEST_CONTEXT, "user_id", None)
+    REQUEST_CONTEXT.user_id = user_id or LOCAL_USER_ID
+    try:
+        yield
+    finally:
+        if previous is None:
+            try:
+                delattr(REQUEST_CONTEXT, "user_id")
+            except AttributeError:
+                pass
+        else:
+            REQUEST_CONTEXT.user_id = previous
+
+
+@contextmanager
+def db_initialization_context():
+    previous = getattr(REQUEST_CONTEXT, "initializing_db", False)
+    REQUEST_CONTEXT.initializing_db = True
+    try:
+        yield
+    finally:
+        REQUEST_CONTEXT.initializing_db = previous
+
+
+def is_public_api_path(path: str) -> bool:
+    return path in {"/api/health", "/api/auth/config", "/api/profile-options"}
+
+
+def user_id_from_bearer_token(handler: SimpleHTTPRequestHandler) -> str:
+    header = handler.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise AuthError("请先登录。")
+    token = header.split(" ", 1)[1].strip()
+    if not token:
+        raise AuthError("请先登录。")
+    secret = os.environ.get("SUPABASE_JWT_SECRET")
+    if not secret:
+        raise AuthError("服务端还没有配置 SUPABASE_JWT_SECRET。")
+    if jwt is None:
+        raise AuthError("服务端缺少 PyJWT，请重新安装依赖。")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+    except Exception as exc:
+        raise AuthError("登录已过期，请重新登录。") from exc
+    user_id = payload.get("sub")
+    if not user_id:
+        raise AuthError("登录信息无效，请重新登录。")
+    return str(user_id)
+
+
+def user_id_for_request(handler: SimpleHTTPRequestHandler, path: str) -> str:
+    if not path.startswith("/api/") or is_public_api_path(path):
+        return LOCAL_USER_ID
+    if not auth_required():
+        return LOCAL_USER_ID
+    return user_id_from_bearer_token(handler)
+
+
+def scan_thread_key(scan_run_id: int, user_id: str | None = None) -> str:
+    return f"{safe_user_id(user_id or request_user_id())}:{scan_run_id}"
+
+
 def ensure_dirs() -> None:
     for path in [
-        DATA_DIR,
-        APPLY_ASSIST_DIR,
-        BROWSER_PROFILE_DIR,
-        RESUME_UPLOAD_DIR,
-        WORKSPACE_DIR,
-        WORKSPACE_DIR / "drafts",
-        WORKSPACE_DIR / "applications",
-        WORKSPACE_DIR / "reports",
+        current_data_dir(),
+        current_apply_assist_dir(),
+        current_browser_profile_dir(),
+        current_resume_upload_dir(),
+        current_workspace_dir(),
+        current_workspace_dir() / "drafts",
+        current_workspace_dir() / "applications",
+        current_workspace_dir() / "reports",
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
 
 def health_payload() -> dict:
     ensure_dirs()
-    with sqlite3.connect(DB_PATH) as conn:
+    db_path = current_db_path()
+    with sqlite3.connect(db_path) as conn:
         conn.execute("select 1").fetchone()
     return {
         "ok": True,
         "app": "job-assistant",
         "time": now_iso(),
-        "database": str(DB_PATH),
+        "database": str(db_path),
+        "storage": "scoped" if scoped_storage_enabled() else "local",
     }
 
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    ensure_dirs()
+    db_path = current_db_path()
+    if not getattr(REQUEST_CONTEXT, "initializing_db", False) and str(db_path) not in INITIALIZED_DB_PATHS:
+        with DB_INIT_LOCK:
+            if str(db_path) not in INITIALIZED_DB_PATHS:
+                setup_db()
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -993,10 +1740,14 @@ def migrate_watch_companies_table(conn: sqlite3.Connection) -> None:
     if not needs_rebuild:
         ensure_column(conn, "watch_companies", "region", "text not null default 'SG'")
         ensure_column(conn, "watch_companies", "city_tags_json", "text not null default '[]'")
+        ensure_column(conn, "watch_companies", "aliases_json", "text not null default '[]'")
         ensure_column(conn, "watch_companies", "company_type", "text not null default 'Company'")
         ensure_column(conn, "watch_companies", "user_added", "integer not null default 0")
         ensure_column(conn, "watch_companies", "priority", "integer not null default 50")
         ensure_column(conn, "watch_companies", "notes", "text not null default ''")
+        ensure_column(conn, "watch_companies", "last_scan_status", "text not null default 'not_scanned'")
+        ensure_column(conn, "watch_companies", "last_scan_note", "text not null default ''")
+        ensure_column(conn, "watch_companies", "last_jobs_found", "integer not null default 0")
         conn.execute(
             "create unique index if not exists idx_watch_companies_region_company on watch_companies(region, company)"
         )
@@ -1013,11 +1764,15 @@ def migrate_watch_companies_table(conn: sqlite3.Connection) -> None:
             focus text not null,
             region text not null default 'SG',
             city_tags_json text not null default '["Singapore"]',
+            aliases_json text not null default '[]',
             company_type text not null default 'Company',
             user_added integer not null default 0,
             priority integer not null default 50,
             notes text not null default '',
             last_checked_at text,
+            last_scan_status text not null default 'not_scanned',
+            last_scan_note text not null default '',
+            last_jobs_found integer not null default 0,
             status text not null default 'Watch',
             unique(region, company)
         )
@@ -1032,18 +1787,23 @@ def migrate_watch_companies_table(conn: sqlite3.Connection) -> None:
         "focus",
         "'SG' as region",
         "'[\"Singapore\"]' as city_tags_json",
+        "aliases_json" if "aliases_json" in old_columns else "'[]' as aliases_json",
         "'Company' as company_type",
         "0 as user_added",
         "50 as priority",
         "'' as notes",
         "last_checked_at" if "last_checked_at" in old_columns else "null as last_checked_at",
+        "last_scan_status" if "last_scan_status" in old_columns else "'not_scanned' as last_scan_status",
+        "last_scan_note" if "last_scan_note" in old_columns else "'' as last_scan_note",
+        "last_jobs_found" if "last_jobs_found" in old_columns else "0 as last_jobs_found",
         "status" if "status" in old_columns else "'Watch' as status",
     ]
     conn.execute(
         f"""
         insert or ignore into watch_companies(
             id, company, source, url, focus, region, city_tags_json,
-            company_type, user_added, priority, notes, last_checked_at, status
+            aliases_json, company_type, user_added, priority, notes, last_checked_at,
+            last_scan_status, last_scan_note, last_jobs_found, status
         )
         select {", ".join(select_columns)}
         from watch_companies_old
@@ -1061,15 +1821,16 @@ def seed_default_watch_companies(conn: sqlite3.Connection) -> None:
             """
             insert into watch_companies(
                 company, source, url, focus, region, city_tags_json,
-                company_type, user_added, priority, notes, status
+                aliases_json, company_type, user_added, priority, notes, status
             )
-            values(?, ?, ?, ?, 'SG', '["Singapore"]', 'Company', 0, 50, '', 'Watch')
+            values(?, ?, ?, ?, 'SG', '["Singapore"]', ?, 'Company', 0, 50, '', 'Watch')
             on conflict(region, company) do update set
                 source=excluded.source,
                 url=excluded.url,
-                focus=excluded.focus
+                focus=excluded.focus,
+                aliases_json=excluded.aliases_json
             """,
-            (company, source, url, focus),
+            (company, source, url, focus, json.dumps(COMPANY_ALIAS_OVERRIDES.get(company.lower(), []), ensure_ascii=False)),
         )
     for item in COMPANY_CATALOG:
         if not item.get("default_watch"):
@@ -1078,14 +1839,15 @@ def seed_default_watch_companies(conn: sqlite3.Connection) -> None:
             """
             insert into watch_companies(
                 company, source, url, focus, region, city_tags_json,
-                company_type, user_added, priority, notes, status
+                aliases_json, company_type, user_added, priority, notes, status
             )
-            values(?, ?, ?, ?, ?, ?, ?, 0, ?, '', 'Watch')
+            values(?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', 'Watch')
             on conflict(region, company) do update set
                 source=excluded.source,
                 url=excluded.url,
                 focus=excluded.focus,
                 city_tags_json=excluded.city_tags_json,
+                aliases_json=excluded.aliases_json,
                 company_type=excluded.company_type,
                 priority=max(watch_companies.priority, excluded.priority)
             """,
@@ -1096,6 +1858,7 @@ def seed_default_watch_companies(conn: sqlite3.Connection) -> None:
                 item["focus"],
                 item["region"],
                 json.dumps(item.get("city_tags") or [], ensure_ascii=False),
+                json.dumps(item.get("aliases") or COMPANY_ALIAS_OVERRIDES.get(item["company"].lower(), []), ensure_ascii=False),
                 item.get("company_type") or "Company",
                 int(item.get("priority") or 50),
             ),
@@ -1104,9 +1867,12 @@ def seed_default_watch_companies(conn: sqlite3.Connection) -> None:
 
 def setup_db() -> None:
     ensure_dirs()
-    with get_db() as conn:
-        conn.executescript(
-            """
+    db_path = current_db_path()
+    with DB_INIT_LOCK:
+        with db_initialization_context():
+            with get_db() as conn:
+                conn.executescript(
+                    """
             create table if not exists jobs (
                 id integer primary key autoincrement,
                 company text not null,
@@ -1251,29 +2017,30 @@ def setup_db() -> None:
                 updated_at text not null
             );
             """
-        )
-        ensure_column(conn, "jobs", "jd_cn_text", "text")
-        ensure_column(conn, "jobs", "region", "text not null default 'SG'")
-        ensure_column(conn, "jobs", "city", "text")
-        ensure_column(conn, "jobs", "source_region", "text")
-        ensure_column(conn, "jobs", "employment_type", "text not null default 'Unknown'")
-        ensure_column(conn, "jobs", "conversion_opportunity", "integer not null default 0")
-        ensure_column(conn, "jobs", "salary_min", "real")
-        ensure_column(conn, "jobs", "salary_max", "real")
-        ensure_column(conn, "jobs", "salary_currency", "text")
-        ensure_column(conn, "jobs", "salary_period", "text")
-        ensure_column(conn, "jobs", "salary_text", "text")
-        ensure_column(conn, "jobs", "salary_fit", "text not null default 'unknown'")
-        ensure_column(conn, "applications", "assist_payload_path", "text")
-        ensure_column(conn, "applications", "assist_result_path", "text")
-        ensure_column(conn, "applications", "assist_status", "text")
-        ensure_column(conn, "applications", "assist_updated_at", "text")
-        ensure_column(conn, "scan_runs", "region", "text not null default 'SG'")
-        ensure_column(conn, "scan_runs", "city", "text")
-        ensure_column(conn, "scan_runs", "source_region", "text")
-        migrate_watch_companies_table(conn)
-        seed_default_watch_companies(conn)
-        backfill_job_metadata(conn)
+                )
+                ensure_column(conn, "jobs", "jd_cn_text", "text")
+                ensure_column(conn, "jobs", "region", "text not null default 'SG'")
+                ensure_column(conn, "jobs", "city", "text")
+                ensure_column(conn, "jobs", "source_region", "text")
+                ensure_column(conn, "jobs", "employment_type", "text not null default 'Unknown'")
+                ensure_column(conn, "jobs", "conversion_opportunity", "integer not null default 0")
+                ensure_column(conn, "jobs", "salary_min", "real")
+                ensure_column(conn, "jobs", "salary_max", "real")
+                ensure_column(conn, "jobs", "salary_currency", "text")
+                ensure_column(conn, "jobs", "salary_period", "text")
+                ensure_column(conn, "jobs", "salary_text", "text")
+                ensure_column(conn, "jobs", "salary_fit", "text not null default 'unknown'")
+                ensure_column(conn, "applications", "assist_payload_path", "text")
+                ensure_column(conn, "applications", "assist_result_path", "text")
+                ensure_column(conn, "applications", "assist_status", "text")
+                ensure_column(conn, "applications", "assist_updated_at", "text")
+                ensure_column(conn, "scan_runs", "region", "text not null default 'SG'")
+                ensure_column(conn, "scan_runs", "city", "text")
+                ensure_column(conn, "scan_runs", "source_region", "text")
+                migrate_watch_companies_table(conn)
+                seed_default_watch_companies(conn)
+                backfill_job_metadata(conn)
+        INITIALIZED_DB_PATHS.add(str(db_path))
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
@@ -1290,6 +2057,7 @@ def row_to_dict(row: sqlite3.Row) -> dict:
         "direction_weights_json",
         "exclude_keywords_json",
         "city_tags_json",
+        "aliases_json",
     ]:
         if key in out:
             try:
@@ -1407,12 +2175,12 @@ def read_resume_text() -> str:
     try:
         profile_resume = Path(load_profile().get("resume_path") or "")
     except Exception:
-        profile_resume = RESUME_PATH
+        profile_resume = current_resume_path()
     candidates = [
         profile_resume,
-        RESUME_PATH,
-        DEFAULT_RESUME_PDF,
-        APP_DIR / "data" / "resumes" / "active-resume.md",
+        current_resume_path(),
+        current_default_resume_pdf(),
+        current_resume_upload_dir() / "active-resume.md",
     ]
     candidates.extend(APP_DIR.parent.glob("*resume.md"))
     for path in candidates:
@@ -1437,7 +2205,7 @@ def default_profile() -> dict:
         "work_authorisation": "I will confirm work eligibility for each role before final submission.",
         "linkedin": "",
         "portfolio": "",
-        "resume_path": str(RESUME_PATH),
+        "resume_path": str(current_resume_path()),
         "cover_letter_path": "",
         "availability": "Available for suitable internship, graduate, or early-career roles, subject to schedule and employer requirements.",
         "common_answers": [
@@ -1456,9 +2224,10 @@ def default_profile() -> dict:
 def load_profile() -> dict:
     ensure_dirs()
     profile = default_profile()
-    if PROFILE_PATH.exists():
+    profile_path = current_profile_path()
+    if profile_path.exists():
         try:
-            stored = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+            stored = json.loads(profile_path.read_text(encoding="utf-8"))
             if isinstance(stored, dict):
                 profile.update(stored)
         except json.JSONDecodeError:
@@ -1475,7 +2244,7 @@ def save_profile(payload: dict) -> dict:
             profile[key] = value
     if not isinstance(profile.get("common_answers"), list):
         profile["common_answers"] = []
-    PROFILE_PATH.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+    current_profile_path().write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
     return profile
 
 
@@ -1583,10 +2352,11 @@ def merge_user_context(stored: dict) -> dict:
 
 def load_user_context() -> dict:
     ensure_dirs()
-    if not USER_CONTEXT_PATH.exists():
+    context_path = current_user_context_path()
+    if not context_path.exists():
         return default_user_context()
     try:
-        return merge_user_context(json.loads(USER_CONTEXT_PATH.read_text(encoding="utf-8")))
+        return merge_user_context(json.loads(context_path.read_text(encoding="utf-8")))
     except json.JSONDecodeError:
         return default_user_context()
 
@@ -1636,7 +2406,7 @@ def save_user_context(payload: dict) -> dict:
             context["onboarding_step"] = 1
     target["updated_at"] = now_iso()
     context["updated_at"] = target["updated_at"]
-    USER_CONTEXT_PATH.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    current_user_context_path().write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     return context
 
 
@@ -1645,7 +2415,7 @@ def mark_resume_analyzed() -> None:
     context["resume_analyzed"] = True
     context["onboarding_step"] = max(3, int(context.get("onboarding_step") or 1))
     context["updated_at"] = now_iso()
-    USER_CONTEXT_PATH.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    current_user_context_path().write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def active_region_code(region: str | None = None) -> str:
@@ -1704,28 +2474,254 @@ def profile_options_payload(region: str | None = None) -> dict:
     }
 
 
+def json_list(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = [item.strip() for item in re.split(r"[,，\n]+", value) if item.strip()]
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    return []
+
+
+def normalize_company_phrase(value: str) -> str:
+    lowered = (value or "").lower().replace("&", " and ")
+    lowered = re.sub(r"\b(private limited|pte ltd|pte\.?\s*ltd\.?|limited|ltd|inc|corp|corporation|co)\b\.?", " ", lowered)
+    lowered = re.sub(r"[^a-z0-9]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def company_alias_values(company: str, item: dict | None = None) -> list[str]:
+    aliases: list[str] = []
+    for value in [company, *(json_list((item or {}).get("aliases"))), *(json_list((item or {}).get("aliases_json")))]:
+        if value and value not in aliases:
+            aliases.append(value)
+    for key in [company.lower(), normalize_company_phrase(company)]:
+        for value in COMPANY_ALIAS_OVERRIDES.get(key, []):
+            if value and value not in aliases:
+                aliases.append(value)
+    for suffix in [" Singapore", " SG", " Hong Kong", " China"]:
+        if company.endswith(suffix):
+            base = company[: -len(suffix)].strip()
+            if len(base) > 2 and base.lower() not in {"ai"} and base not in aliases:
+                aliases.append(base)
+    return aliases or [company]
+
+
+def company_match_terms(company: str, item: dict | None = None) -> list[str]:
+    terms: list[str] = []
+    for alias in company_alias_values(company, item):
+        normalized = normalize_company_phrase(alias)
+        if not normalized:
+            continue
+        if len(normalized) <= 2 and normalized not in {"ai"}:
+            continue
+        if normalized not in terms:
+            terms.append(normalized)
+    return sorted(terms, key=len, reverse=True)
+
+
+def company_text_has_term(text: str, term: str) -> bool:
+    normalized = f" {normalize_company_phrase(text)} "
+    return f" {term} " in normalized
+
+
+def match_job_to_company(job: dict, company: str, item: dict | None = None) -> tuple[bool, str]:
+    terms = company_match_terms(company, item)
+    company_text = job.get("company") or ""
+    for term in terms:
+        if company_text_has_term(company_text, term):
+            return True, f"公司名匹配：{term}"
+    generic_company_names = {
+        "",
+        "unknown company",
+        "linkedin company",
+        "jobstreet company",
+        "indeed company",
+        "internsg company",
+        "google jobs",
+    }
+    if normalize_company_phrase(company_text) not in generic_company_names:
+        return False, ""
+    broader_text = f"{job.get('name') or ''} {job.get('position') or ''} {(job.get('jd_text') or '')[:900]}"
+    for term in terms:
+        if len(term) >= 6 and company_text_has_term(broader_text, term):
+            return True, f"岗位文本匹配：{term}"
+    return False, ""
+
+
+def company_source_label(source: str) -> str:
+    source_text = source or ""
+    for key, label in COMPANY_SCAN_SOURCE_LABELS.items():
+        if key.lower() in source_text.lower():
+            return label
+    return f"{source_text or '公共来源'} 匹配"
+
+
+def company_source_group(source: str) -> str:
+    lowered = (source or "").lower()
+    if "company site" in lowered or "ats" in lowered:
+        return "official"
+    if "linkedin" in lowered or "jobstreet" in lowered or "google jobs" in lowered:
+        return "public_match"
+    return "supplemental"
+
+
+def company_item_from_row(row: dict) -> dict:
+    out = dict(row)
+    out["city_tags"] = out.get("city_tags") or out.get("city_tags_json") or []
+    out["aliases"] = company_alias_values(out.get("company") or "", out)
+    return out
+
+
+def company_catalog_item(company: str, region: str | None = None) -> dict | None:
+    code = active_region_code(region)
+    lowered = (company or "").lower()
+    for item in COMPANY_CATALOG:
+        if item["region"] == code and item["company"].lower() == lowered:
+            return dict(item)
+    return None
+
+
+def company_match_rows(region: str, city: str | None = None) -> list[dict]:
+    code = active_region_code(region)
+    query = "select * from jobs where region=?"
+    values: list[str] = [code]
+    if city and code == "CN":
+        query += " and (city=? or location like ? or coalesce(city, '')='')"
+        values.extend([city, f"%{city}%"])
+    query += " order by score desc, updated_at desc limit 1000"
+    with get_db() as conn:
+        rows = conn.execute(query, values).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def matched_company_jobs(item: dict, jobs: list[dict], limit: int | None = None) -> list[dict]:
+    company = item.get("company") or ""
+    matches: list[dict] = []
+    seen: set[str] = set()
+    for job in jobs:
+        ok, reason = match_job_to_company(job, company, item)
+        if not ok:
+            continue
+        key = canonical_job_url(job.get("source") or "", job.get("url") or "", job.get("external_job_id")) or normalize_company_phrase(f"{job.get('company')} {job.get('position')}")
+        if key in seen:
+            continue
+        seen.add(key)
+        out = dict(job)
+        out["company_match_reason"] = reason
+        out["company_match_source_label"] = company_source_label(out.get("source") or "")
+        out["company_match_source_group"] = company_source_group(out.get("source") or "")
+        matches.append(out)
+        if limit and len(matches) >= limit:
+            break
+    return matches
+
+
+def company_scan_note(item: dict, matched_count: int) -> str:
+    status = item.get("last_scan_status") or "not_scanned"
+    note = item.get("last_scan_note") or ""
+    if note:
+        return note
+    if matched_count:
+        return "已从官网/ATS或公共来源匹配到岗位。"
+    if status == "empty":
+        return "官网未暴露可识别岗位列表，公共来源暂无匹配。"
+    if status in {"failed", "limited"}:
+        return "官网本次访问受限或失败，公共来源暂无匹配。"
+    return "还没有扫描到可展示岗位。"
+
+
+def enrich_company_items(items: list[dict], region: str, city: str | None = None) -> list[dict]:
+    jobs = company_match_rows(region, city)
+    enriched = []
+    for item in items:
+        out = company_item_from_row(item)
+        matches = matched_company_jobs(out, jobs)
+        out["aliases"] = company_alias_values(out.get("company") or "", out)
+        out["matched_jobs_count"] = len(matches)
+        out["matched_official_count"] = sum(1 for job in matches if job.get("company_match_source_group") == "official")
+        out["last_scan_status"] = out.get("last_scan_status") or "not_scanned"
+        out["last_scan_note"] = company_scan_note(out, len(matches))
+        enriched.append(out)
+    return enriched
+
+
+def company_jobs_payload(company: str, region: str | None = None, city: str | None = None, company_id: int | None = None, limit: int = 40) -> dict:
+    code = active_region_code(region)
+    city_name = (city or active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]).strip()
+    item: dict | None = None
+    if company_id:
+        with get_db() as conn:
+            row = conn.execute("select * from watch_companies where id=?", (company_id,)).fetchone()
+        if row:
+            item = company_item_from_row(row_to_dict(row))
+            code = active_region_code(item.get("region"))
+    if item is None:
+        item = company_catalog_item(company, code) or {"company": company, "region": code}
+        with get_db() as conn:
+            watched_row = conn.execute(
+                "select * from watch_companies where region=? and lower(company)=lower(?)",
+                (code, item.get("company") or company),
+            ).fetchone()
+        if watched_row:
+            item = {**item, **company_item_from_row(row_to_dict(watched_row))}
+    rows = company_match_rows(code, city_name)
+    company_item = company_item_from_row(item)
+    all_matches = matched_company_jobs(company_item, rows)
+    jobs = all_matches[:limit]
+    return {
+        "company": item.get("company") or company,
+        "region": code,
+        "city": city_name,
+        "aliases": company_alias_values(item.get("company") or company, item),
+        "matched_jobs_count": len(all_matches),
+        "jobs": jobs,
+        "last_scan_status": item.get("last_scan_status") or "not_scanned",
+        "last_scan_note": company_scan_note(item, len(all_matches)),
+    }
+
+
 def watched_company_keys(region: str | None = None) -> set[str]:
     code = active_region_code(region)
     with get_db() as conn:
         rows = conn.execute(
-            "select company from watch_companies where region=? and status='Watch'",
+            "select * from watch_companies where region=? and status='Watch'",
             (code,),
         ).fetchall()
-    return {row["company"].lower() for row in rows}
+    terms: set[str] = set()
+    for row in rows:
+        item = company_item_from_row(row_to_dict(row))
+        terms.update(company_match_terms(item["company"], item))
+    return terms
 
 
 def company_catalog(region: str | None = None, city: str | None = None) -> list[dict]:
     code = active_region_code(region)
     city_name = (city or active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]).strip()
-    watched = watched_company_keys(code)
+    with get_db() as conn:
+        watched_rows = conn.execute(
+            "select * from watch_companies where region=? and status='Watch'",
+            (code,),
+        ).fetchall()
+    watched = {row["company"].lower(): row_to_dict(row) for row in watched_rows}
     items = []
     for item in COMPANY_CATALOG:
         if item["region"] != code:
             continue
         out = dict(item)
+        watched_item = watched.get(item["company"].lower())
+        if watched_item:
+            out.update(watched_item)
         out["watched"] = item["company"].lower() in watched
         out["city_match"] = city_name in (item.get("city_tags") or [])
         items.append(out)
+    items = enrich_company_items(items, code, city_name)
     items.sort(key=lambda value: (value.get("watched", False), value.get("city_match", False), int(value.get("priority") or 0)), reverse=True)
     return items
 
@@ -1788,7 +2784,7 @@ def active_resume_payload() -> dict:
     version = get_active_resume_version()
     if version:
         return version
-    profile_path = Path(load_profile().get("resume_path") or RESUME_PATH)
+    profile_path = Path(load_profile().get("resume_path") or current_resume_path())
     return {
         "id": None,
         "filename": profile_path.name,
@@ -1836,7 +2832,7 @@ def ensure_resume_version_for_path(path: Path) -> dict:
             conn.execute("update resume_versions set active=0 where active=1")
             conn.execute("update resume_versions set active=1 where id=?", (existing["id"],))
             return resume_version_to_dict(conn.execute("select * from resume_versions where id=?", (existing["id"],)).fetchone())
-        text_path = RESUME_UPLOAD_DIR / f"{path.stem}-{content_hash[:10]}.txt"
+        text_path = current_resume_upload_dir() / f"{path.stem}-{content_hash[:10]}.txt"
         text_path.write_text(text, encoding="utf-8")
         stamp = now_iso()
         conn.execute("update resume_versions set active=0 where active=1")
@@ -1868,7 +2864,7 @@ def save_uploaded_resume(original_filename: str, content: bytes, mime_type: str 
     content_hash = hashlib.sha256(content).hexdigest()
     safe_name = sanitize_filename(Path(original_filename).stem) or "resume"
     filename = f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{content_hash[:10]}-{safe_name}{suffix}"
-    stored_path = RESUME_UPLOAD_DIR / filename
+    stored_path = current_resume_upload_dir() / filename
     stored_path.write_bytes(content)
     text = read_resume_file(stored_path)
     if not text.strip():
@@ -2025,7 +3021,7 @@ def analyze_resume_version(resume_version_id: int | None = None, mode: str = "lo
     if not version:
         version = get_active_resume_version()
     if not version:
-        version = ensure_resume_version_for_path(Path(load_profile().get("resume_path") or RESUME_PATH))
+        version = ensure_resume_version_for_path(Path(load_profile().get("resume_path") or current_resume_path()))
     text_path = Path(version["text_path"])
     text = text_path.read_text(encoding="utf-8", errors="ignore") if text_path.exists() else read_resume_file(Path(version["stored_path"]))
     if not text.strip():
@@ -3020,15 +4016,358 @@ def fetch_jobstreet_jobs_with_ai(limit: int, region: str | None = None) -> tuple
     )
 
 
+def company_job_record(
+    company: str,
+    title: str,
+    url: str,
+    region: str,
+    city: str,
+    focus: str,
+    source_url: str,
+    description: str = "",
+    source: str = "Company Site",
+    location: str | None = None,
+) -> dict | None:
+    position = clean_text(title)[:180]
+    if not position or not COMPANY_SCAN_ROLE_PATTERN.search(f"{position} {description} {focus}"):
+        return None
+    job_url = absolute_url(source_url, url)
+    if not job_url.startswith("http"):
+        return None
+    jd_text = clean_text(description)[:9000]
+    return {
+        "company": company,
+        "position": position,
+        "source": source,
+        "url": job_url,
+        "location": location or city,
+        "region": region,
+        "city": city,
+        "source_region": region,
+        "job_type": "Company career page",
+        "jd_text": f"{company} official career match\nRole: {position}\nFocus: {focus}\nSource: {source_url}\nURL: {job_url}\n\n{jd_text}".strip(),
+    }
+
+
+def append_company_job(jobs: list[dict], seen: set[str], job: dict | None, limit: int) -> None:
+    if not job or len(jobs) >= limit:
+        return
+    key = canonical_job_url(job.get("source") or "", job.get("url") or "", job.get("external_job_id"))
+    if key in seen:
+        return
+    seen.add(key)
+    jobs.append(job)
+
+
+def iter_json_objects(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from iter_json_objects(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_json_objects(child)
+
+
+def parse_company_jsonld_jobs(html: str, base_url: str, company: str, focus: str, region: str, city: str, limit: int) -> list[dict]:
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for script in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html or "", flags=re.I | re.S):
+        try:
+            payload = json.loads(unescape(script).strip())
+        except Exception:
+            continue
+        for item in iter_json_objects(payload):
+            item_type = item.get("@type") or item.get("type")
+            types = item_type if isinstance(item_type, list) else [item_type]
+            if not any(str(value).lower() == "jobposting" for value in types):
+                continue
+            title = item.get("title") or item.get("name") or ""
+            location_value = city
+            job_location = item.get("jobLocation")
+            if isinstance(job_location, dict):
+                address = job_location.get("address") or {}
+                if isinstance(address, dict):
+                    location_value = clean_text(" ".join(str(address.get(key) or "") for key in ["addressLocality", "addressRegion", "addressCountry"])) or city
+            description = item.get("description") or item.get("responsibilities") or ""
+            append_company_job(
+                jobs,
+                seen,
+                company_job_record(company, title, item.get("url") or base_url, region, city, focus, base_url, description, "Company Site / ATS", location_value),
+                limit,
+            )
+            if len(jobs) >= limit:
+                return jobs
+    return jobs
+
+
+def parse_company_anchor_jobs(html: str, page_url: str, company: str, focus: str, region: str, city: str, limit: int) -> list[dict]:
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for href, label in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html or "", flags=re.I | re.S):
+        if len(jobs) >= limit:
+            break
+        text = clean_text(label)
+        if len(text) < 5:
+            continue
+        append_company_job(
+            jobs,
+            seen,
+            company_job_record(company, text, href, region, city, focus, page_url, text, "Company Site"),
+            limit,
+        )
+    return jobs
+
+
+def extract_embedded_ats_links(html: str, base_url: str) -> list[str]:
+    links: list[str] = []
+    for raw in re.findall(r'https?://[^"\'\s<>]+', html or "", flags=re.I):
+        cleaned = raw.rstrip(").,;")
+        if COMPANY_CAREER_LINK_PATTERN.search(cleaned):
+            links.append(cleaned)
+    for href, label in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html or "", flags=re.I | re.S):
+        text = f"{href} {clean_text(label)}"
+        if COMPANY_CAREER_LINK_PATTERN.search(text):
+            links.append(absolute_url(base_url, href))
+    parsed = urlparse(base_url)
+    if parsed.scheme and parsed.netloc:
+        for path in ["/careers", "/career", "/jobs", "/openings", "/join-us", "/work-with-us"]:
+            links.append(f"{parsed.scheme}://{parsed.netloc}{path}")
+    out: list[str] = []
+    seen: set[str] = set()
+    base_host = parsed.netloc.lower().removeprefix("www.")
+    ats_hosts = (
+        "greenhouse.io",
+        "lever.co",
+        "ashbyhq.com",
+        "workdayjobs.com",
+        "myworkdayjobs.com",
+        "smartrecruiters.com",
+        "apply.workable.com",
+        "bamboohr.com",
+        "careers-page.com",
+        "surgeahead.com",
+        "lifeatcanva.com",
+        "wise.jobs",
+    )
+    for link in links:
+        parsed_link = urlparse(link)
+        host = parsed_link.netloc.lower().removeprefix("www.")
+        if not parsed_link.scheme.startswith("http"):
+            continue
+        if host != base_host and not any(ats in host for ats in ats_hosts):
+            continue
+        key = parsed_link._replace(fragment="").geturl()
+        if key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def greenhouse_board_token(url: str) -> str:
+    parsed = urlparse(url)
+    if "greenhouse.io" not in parsed.netloc:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts:
+        return ""
+    if parts[0] in {"embed", "jobs"} and len(parts) > 1:
+        return parts[1]
+    return parts[0]
+
+
+def lever_company_token(url: str) -> str:
+    parsed = urlparse(url)
+    if "lever.co" not in parsed.netloc:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    return parts[0] if parts else ""
+
+
+def ashby_board_token(url: str) -> str:
+    parsed = urlparse(url)
+    if "ashbyhq.com" not in parsed.netloc:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    return parts[0] if parts else ""
+
+
+def smartrecruiters_company_token(url: str) -> str:
+    parsed = urlparse(url)
+    if "smartrecruiters.com" not in parsed.netloc:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    return parts[0] if len(parts) >= 1 and parts[0].lower() != "job" else ""
+
+
+def workable_account_token(url: str) -> str:
+    parsed = urlparse(url)
+    if "apply.workable.com" not in parsed.netloc:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts or parts[0].lower() == "j":
+        return ""
+    return parts[0]
+
+
+def location_matches_region(location_text: str, region: str, city: str) -> bool:
+    text = clean_text(location_text).lower()
+    if not text:
+        return True
+    if "remote" in text:
+        return True
+    region_terms = {
+        "SG": ["singapore", "sg"],
+        "CN": ["china", "mainland", "beijing", "shanghai", "shenzhen", "hangzhou", "guangzhou"],
+        "HK": ["hong kong", "hong kong sar", "hk"],
+    }.get(region, [])
+    if city:
+        region_terms.append(city.lower())
+    return any(term and term in text for term in region_terms)
+
+
+def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city: str, limit: int) -> tuple[list[dict], list[str]]:
+    jobs: list[dict] = []
+    failures: list[str] = []
+    seen: set[str] = set()
+    greenhouse = greenhouse_board_token(url)
+    lever = lever_company_token(url)
+    ashby = ashby_board_token(url)
+    smartrecruiters = smartrecruiters_company_token(url)
+    workable = workable_account_token(url)
+    try:
+        if greenhouse:
+            payload = json.loads(http_get(f"https://boards-api.greenhouse.io/v1/boards/{greenhouse}/jobs?content=true", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+            for item in payload.get("jobs") or []:
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        item.get("title") or "",
+                        item.get("absolute_url") or url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        clean_text(item.get("content") or ""),
+                        "Company Site / ATS",
+                        (item.get("location") or {}).get("name") if isinstance(item.get("location"), dict) else None,
+                    ),
+                    limit,
+                )
+        elif lever:
+            payload = json.loads(http_get(f"https://api.lever.co/v0/postings/{lever}?mode=json", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+            for item in payload if isinstance(payload, list) else []:
+                categories = item.get("categories") or {}
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        item.get("text") or "",
+                        item.get("hostedUrl") or item.get("applyUrl") or url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        item.get("descriptionPlain") or item.get("description") or "",
+                        "Company Site / ATS",
+                        categories.get("location") if isinstance(categories, dict) else None,
+                    ),
+                    limit,
+                )
+        elif ashby:
+            payload = json.loads(http_get(f"https://api.ashbyhq.com/posting-api/job-board/{ashby}", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+            for item in payload.get("jobs") or []:
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        item.get("title") or "",
+                        item.get("jobUrl") or item.get("applyUrl") or url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        item.get("descriptionHtml") or item.get("descriptionPlain") or "",
+                        "Company Site / ATS",
+                        item.get("locationName") or item.get("location"),
+                    ),
+                    limit,
+                )
+        elif smartrecruiters:
+            payload = json.loads(http_get(f"https://api.smartrecruiters.com/v1/companies/{smartrecruiters}/postings?limit=100", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+            for item in payload.get("content") or []:
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        item.get("name") or "",
+                        item.get("ref") or item.get("applyUrl") or url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        item.get("name") or "",
+                        "Company Site / ATS",
+                        ((item.get("location") or {}).get("city") if isinstance(item.get("location"), dict) else None) or city,
+                    ),
+                    limit,
+                )
+        elif workable:
+            payload = json.loads(http_get(f"https://apply.workable.com/api/v1/widget/accounts/{workable}?details=true", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+            for item in payload.get("jobs") or []:
+                locations = item.get("locations") if isinstance(item.get("locations"), list) else []
+                location_text = " ".join(
+                    clean_text(" ".join(str(location.get(key) or "") for key in ["city", "region", "country", "countryCode"]))
+                    for location in locations
+                    if isinstance(location, dict)
+                )
+                location_text = location_text or clean_text(" ".join(str(item.get(key) or "") for key in ["city", "state", "country"]))
+                if not location_matches_region(location_text, region, city):
+                    continue
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        item.get("title") or "",
+                        item.get("url") or item.get("shortlink") or item.get("application_url") or url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        item.get("description") or "",
+                        "Company Site / ATS",
+                        location_text or city,
+                    ),
+                    limit,
+                )
+    except Exception as exc:
+        failures.append(f"{company} ATS {url}: {exc}")
+    return jobs[:limit], failures
+
+
+def update_company_scan_result(company: str, region: str, status: str, note: str, jobs_found: int) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """
+            update watch_companies
+            set last_checked_at=?, last_scan_status=?, last_scan_note=?, last_jobs_found=?
+            where region=? and company=?
+            """,
+            (now_iso(), status, note[:500], jobs_found, region, company),
+        )
+
+
 def fetch_company_site_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
     jobs: list[dict] = []
     failures: list[str] = []
     code = active_region_code(region)
     city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
-    role_pattern = re.compile(
-        r"\b(intern|internship|graduate|associate|junior|ux|user research|design|designer|product|operations|analyst|content|marketing)\b",
-        flags=re.I,
-    )
     with get_db() as conn:
         companies = conn.execute(
             """
@@ -3039,47 +4378,51 @@ def fetch_company_site_jobs(limit: int, region: str | None = None) -> tuple[list
             """,
             (code,),
         ).fetchall()
-    per_company = max(1, limit // max(1, len(companies)))
+    per_company = max(2, min(COMPANY_SCAN_PER_COMPANY_CAP, (limit // max(1, len(companies))) + 1))
     for row in companies:
         if len(jobs) >= limit:
             break
         company = row["company"]
         base_url = row["url"]
+        company_jobs: list[dict] = []
+        seen_urls: set[str] = set()
+        company_failures: list[str] = []
         try:
-            html = http_get(base_url, timeout=20)
+            html = http_get(base_url, timeout=COMPANY_SCAN_TIMEOUT, retries=0)
         except Exception as exc:
-            failures.append(f"{company}: {exc}")
+            message = f"{company}: {exc}"
+            failures.append(message)
+            update_company_scan_result(company, code, "failed", "官网访问失败，已保留公共来源匹配。", 0)
             continue
-        found_for_company = 0
-        for href, label in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, flags=re.I | re.S):
-            if len(jobs) >= limit or found_for_company >= per_company:
+        pages = [base_url, *extract_embedded_ats_links(html, base_url)]
+        for page_url in pages[:COMPANY_SCAN_PAGE_CAP]:
+            if len(company_jobs) >= per_company:
                 break
-            text = clean_text(label)
-            if not text or not role_pattern.search(text):
-                continue
-            job_url = absolute_url(base_url, href)
-            if not job_url.startswith("http"):
-                continue
-            found_for_company += 1
-            jobs.append(
-                {
-                    "company": company,
-                    "position": text[:180],
-                    "source": "Company Site",
-                    "url": job_url,
-                    "location": city,
-                    "region": code,
-                    "city": city,
-                    "source_region": code,
-                    "job_type": "Company career page",
-                    "jd_text": f"{company} career page shallow match\nRole/link text: {text}\nFocus: {row['focus']}\nSource: {base_url}\nURL: {job_url}",
-                }
-            )
-        with get_db() as conn:
-            conn.execute(
-                "update watch_companies set last_checked_at=? where region=? and company=?",
-                (now_iso(), code, company),
-            )
+            ats_jobs, ats_failures = fetch_company_ats_jobs(page_url, company, row["focus"], code, city, per_company - len(company_jobs))
+            company_failures.extend(ats_failures)
+            for job in ats_jobs:
+                append_company_job(company_jobs, seen_urls, job, per_company)
+            if len(company_jobs) >= per_company:
+                break
+            page_html = html if page_url == base_url else ""
+            if page_url != base_url:
+                try:
+                    page_html = http_get(page_url, timeout=COMPANY_SCAN_TIMEOUT, retries=0)
+                except Exception as exc:
+                    company_failures.append(f"{company} {page_url}: {exc}")
+                    continue
+            for job in parse_company_jsonld_jobs(page_html, page_url, company, row["focus"], code, city, per_company - len(company_jobs)):
+                append_company_job(company_jobs, seen_urls, job, per_company)
+            for job in parse_company_anchor_jobs(page_html, page_url, company, row["focus"], code, city, per_company - len(company_jobs)):
+                append_company_job(company_jobs, seen_urls, job, per_company)
+        jobs.extend(company_jobs[: max(0, limit - len(jobs))])
+        if company_jobs:
+            update_company_scan_result(company, code, "success", f"官网/ATS 本次找到 {len(company_jobs)} 个可识别岗位。", len(company_jobs))
+        elif company_failures:
+            failures.extend(company_failures[:3])
+            update_company_scan_result(company, code, "limited", "官网部分页面访问受限，公共来源匹配会继续补充。", 0)
+        else:
+            update_company_scan_result(company, code, "empty", "官网未暴露可识别岗位列表，公共来源匹配会继续补充。", 0)
     return jobs, failures
 
 
@@ -3293,7 +4636,7 @@ def finish_scan_run(scan_run_id: int, status: str, scanned: int, saved: int, rec
 
 def scan_thread_alive(scan_run_id: int) -> bool:
     with SCAN_THREADS_LOCK:
-        thread = SCAN_THREADS.get(scan_run_id)
+        thread = SCAN_THREADS.get(scan_thread_key(scan_run_id))
     return bool(thread and thread.is_alive())
 
 
@@ -3545,14 +4888,15 @@ def scan_status_payload(scan_run_id: int | None = None, region: str | None = Non
     }
 
 
-def _scan_async_worker(scan_run_id: int, triggered_by: str, forced: bool, region: str) -> None:
-    try:
-        scan_sources(triggered_by=triggered_by, forced=forced, scan_run_id=scan_run_id, region=region)
-    except Exception as exc:
-        finish_scan_run(scan_run_id, "failed", 0, 0, 0, 0, [{"source": "scan", "error": str(exc)}])
-    finally:
-        with SCAN_THREADS_LOCK:
-            SCAN_THREADS.pop(scan_run_id, None)
+def _scan_async_worker(scan_run_id: int, triggered_by: str, forced: bool, region: str, user_id: str) -> None:
+    with request_user_context(user_id):
+        try:
+            scan_sources(triggered_by=triggered_by, forced=forced, scan_run_id=scan_run_id, region=region)
+        except Exception as exc:
+            finish_scan_run(scan_run_id, "failed", 0, 0, 0, 0, [{"source": "scan", "error": str(exc)}])
+        finally:
+            with SCAN_THREADS_LOCK:
+                SCAN_THREADS.pop(scan_thread_key(scan_run_id, user_id), None)
 
 
 def start_scan_async(triggered_by: str = "manual", forced: bool = True, region: str | None = None) -> dict:
@@ -3561,9 +4905,10 @@ def start_scan_async(triggered_by: str = "manual", forced: bool = True, region: 
     if existing:
         return {"started": False, "reason": "scan_already_running", **scan_status_payload(existing["id"], code)}
     scan_run_id = create_scan_run(triggered_by, forced, code)
-    thread = threading.Thread(target=_scan_async_worker, args=(scan_run_id, triggered_by, forced, code), daemon=True)
+    user_id = request_user_id()
+    thread = threading.Thread(target=_scan_async_worker, args=(scan_run_id, triggered_by, forced, code, user_id), daemon=True)
     with SCAN_THREADS_LOCK:
-        SCAN_THREADS[scan_run_id] = thread
+        SCAN_THREADS[scan_thread_key(scan_run_id, user_id)] = thread
     thread.start()
     return {"started": True, **scan_status_payload(scan_run_id, code)}
 
@@ -4174,8 +5519,9 @@ def write_resume_pdf_fallback(markdown_text: str, output_path: Path, job: dict) 
         Paragraph(AI_RESUME_HEADLINE, subtitle),
         Paragraph(ascii_pdf_text(contact_line), small),
     ]
-    if PROFILE_PHOTO_PATH.exists():
-        story.extend([Spacer(1, 4), Image(str(PROFILE_PHOTO_PATH), width=24 * mm, height=30 * mm)])
+    profile_photo_path = current_profile_photo_path()
+    if profile_photo_path.exists():
+        story.extend([Spacer(1, 4), Image(str(profile_photo_path), width=24 * mm, height=30 * mm)])
 
     for raw_line in markdown_text.splitlines():
         line = raw_line.strip()
@@ -4202,8 +5548,9 @@ def write_resume_pdf(markdown_text: str, output_path: Path, job: dict) -> None:
 
     html_path = output_path.with_suffix(".html")
     photo_name = "profile-photo.jpg"
-    if PROFILE_PHOTO_PATH.exists():
-        shutil.copyfile(PROFILE_PHOTO_PATH, output_path.parent / photo_name)
+    profile_photo_path = current_profile_photo_path()
+    if profile_photo_path.exists():
+        shutil.copyfile(profile_photo_path, output_path.parent / photo_name)
     render_resume_html(job, html_path, photo_name)
     if not render_html_pdf(html_path, output_path):
         write_resume_pdf_fallback(markdown_text, output_path, job)
@@ -4244,7 +5591,7 @@ def materials_need_refresh(job: dict) -> bool:
 
 def make_drafts(job: dict) -> tuple[str, str]:
     date = today()
-    job_dir = WORKSPACE_DIR / "applications" / date / sanitize_filename(f"{job['company']} - {job['position']}")
+    job_dir = current_workspace_dir() / "applications" / date / sanitize_filename(f"{job['company']} - {job['position']}")
     job_dir.mkdir(parents=True, exist_ok=True)
     resume_md_path = job_dir / "tailored-resume.md"
     resume_pdf_path = job_dir / "tailored-resume.pdf"
@@ -4263,7 +5610,7 @@ Company: {job['company']}
 Position: {job['position']}
 URL: {job['url']}
 Score: {job['score']}/5.0
-Resume source: {RESUME_PATH}
+Resume source: {current_resume_path()}
 
 ## Match Notes
 
@@ -4659,8 +6006,8 @@ def region_fit_for_job(job: dict, region: str, watched_companies: set[str]) -> d
     location_match = bool(city and city in location_text) or bool(REGION_CONFIGS[code]["label"].lower() in location_text)
     if code == "SG" and "singapore" in location_text:
         location_match = True
-    company_key = (job.get("company") or "").lower()
-    company_boost = 0.35 if company_key in watched_companies else 0.0
+    company_text = f"{job.get('company') or ''} {job.get('name') or ''}"
+    company_boost = 0.35 if any(company_text_has_term(company_text, term) for term in watched_companies) else 0.0
     location_reason = REGION_CONFIGS[code]["label"]
     if location_match:
         location_reason = f"Matches {context.get('city') or REGION_CONFIGS[code]['default_city']}"
@@ -4908,7 +6255,7 @@ def summary() -> dict:
         "date": current_date,
         "region": region,
         "region_label": REGION_CONFIGS[region]["label"],
-        "resume_path": str(RESUME_PATH),
+        "resume_path": str(current_resume_path()),
         "total": rows["total"] or 0,
         "recommended": rows["recommended"] or 0,
         "apply_queue": rows["apply_queue"] or 0,
@@ -5008,6 +6355,7 @@ def confirm_applied(job_id: int) -> dict:
 
 def watchlist(region: str | None = None) -> list[dict]:
     code = active_region_code(region)
+    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -5017,7 +6365,7 @@ def watchlist(region: str | None = None) -> list[dict]:
             """,
             (code,),
         ).fetchall()
-    return [row_to_dict(row) for row in rows]
+    return enrich_company_items([row_to_dict(row) for row in rows], code, city)
 
 
 def add_watch_company(payload: dict) -> dict:
@@ -5033,6 +6381,8 @@ def add_watch_company(payload: dict) -> dict:
         city_tags = [item.strip() for item in re.split(r"[,，\n]+", city_tags) if item.strip()]
     if not city_tags:
         city_tags = [active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]]
+    aliases = json_list(payload.get("aliases") or payload.get("aliases_json"))
+    aliases = company_alias_values(company, {"aliases": aliases})
     company_type = (payload.get("company_type") or "Company").strip()
     priority = int(payload.get("priority") or 70)
     notes = (payload.get("notes") or "").strip()
@@ -5049,15 +6399,16 @@ def add_watch_company(payload: dict) -> dict:
             """
             insert into watch_companies(
                 company, source, url, focus, region, city_tags_json, company_type,
-                user_added, priority, notes, last_checked_at, status
+                aliases_json, user_added, priority, notes, last_checked_at, status
             )
-            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, 'Watch')
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, 'Watch')
             on conflict(region, company) do update set
                 source=excluded.source,
                 url=excluded.url,
                 focus=excluded.focus,
                 city_tags_json=excluded.city_tags_json,
                 company_type=excluded.company_type,
+                aliases_json=excluded.aliases_json,
                 user_added=max(watch_companies.user_added, excluded.user_added),
                 priority=excluded.priority,
                 notes=excluded.notes,
@@ -5071,6 +6422,7 @@ def add_watch_company(payload: dict) -> dict:
                 code,
                 json.dumps(city_tags, ensure_ascii=False),
                 company_type,
+                json.dumps(aliases, ensure_ascii=False),
                 user_added,
                 priority,
                 notes,
@@ -5094,6 +6446,8 @@ def update_watch_company(company_id: int, payload: dict) -> dict:
         city_tags = payload.get("city_tags") or current.get("city_tags_json") or []
         if isinstance(city_tags, str):
             city_tags = [item.strip() for item in re.split(r"[,，\n]+", city_tags) if item.strip()]
+        aliases = json_list(payload.get("aliases") or payload.get("aliases_json") or current.get("aliases_json"))
+        aliases = company_alias_values(company, {"aliases": aliases})
         conn.execute(
             """
             update watch_companies set
@@ -5102,6 +6456,7 @@ def update_watch_company(company_id: int, payload: dict) -> dict:
                 url=?,
                 focus=?,
                 city_tags_json=?,
+                aliases_json=?,
                 company_type=?,
                 priority=?,
                 notes=?,
@@ -5114,6 +6469,7 @@ def update_watch_company(company_id: int, payload: dict) -> dict:
                 url,
                 payload.get("focus") or current["focus"],
                 json.dumps(city_tags, ensure_ascii=False),
+                json.dumps(aliases, ensure_ascii=False),
                 payload.get("company_type") or current.get("company_type") or "Company",
                 int(payload.get("priority") or current.get("priority") or 70),
                 payload.get("notes") if payload.get("notes") is not None else current.get("notes") or "",
@@ -5152,7 +6508,7 @@ def generate_report(region: str | None = None) -> dict:
         "watch_count": sum(1 for job in jobs if job["status"] == "Watch"),
         "drop_count": sum(1 for job in jobs if job["status"] == "Dropped"),
     }
-    report_path = WORKSPACE_DIR / "reports" / f"{current_date}-{region}.md"
+    report_path = current_workspace_dir() / "reports" / f"{current_date}-{region}.md"
     lines = [
         f"# Career Copilot Daily Report - {REGION_CONFIGS[region]['label']} - {current_date}",
         "",
@@ -5260,18 +6616,55 @@ def notion_schema() -> dict:
     }
 
 
+def load_notion_config() -> dict:
+    ensure_dirs()
+    path = current_notion_config_path()
+    config = {"token": "", "database_id": "", "updated_at": ""}
+    if path.exists():
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(stored, dict):
+                config.update({
+                    "token": str(stored.get("token") or ""),
+                    "database_id": str(stored.get("database_id") or ""),
+                    "updated_at": str(stored.get("updated_at") or ""),
+                })
+        except json.JSONDecodeError:
+            pass
+    if not auth_required():
+        config["token"] = config["token"] or os.environ.get("NOTION_TOKEN", "")
+        config["database_id"] = config["database_id"] or os.environ.get("NOTION_DATABASE_ID", "")
+    return config
+
+
+def save_notion_config(payload: dict) -> dict:
+    ensure_dirs()
+    current = load_notion_config()
+    if "token" in payload:
+        current["token"] = str(payload.get("token") or "").strip()
+    if "database_id" in payload:
+        current["database_id"] = str(payload.get("database_id") or "").strip()
+    current["updated_at"] = now_iso()
+    current_notion_config_path().write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+    return notion_status()
+
+
 def notion_status() -> dict:
+    config = load_notion_config()
+    user_config_exists = current_notion_config_path().exists()
     return {
-        "token_configured": bool(os.environ.get("NOTION_TOKEN")),
-        "database_id_configured": bool(os.environ.get("NOTION_DATABASE_ID")),
-        "env_file": ".env.local" if (APP_DIR / ".env.local").exists() else "",
+        "token_configured": bool(config.get("token")),
+        "database_id_configured": bool(config.get("database_id")),
+        "source": "user" if user_config_exists else ("env" if not auth_required() and (os.environ.get("NOTION_TOKEN") or os.environ.get("NOTION_DATABASE_ID")) else "none"),
+        "env_file": ".env.local" if not auth_required() and (APP_DIR / ".env.local").exists() else "",
+        "updated_at": config.get("updated_at") or "",
     }
 
 
 def notion_request(method: str, path: str, payload: dict | None = None) -> dict:
-    token = os.environ.get("NOTION_TOKEN")
+    token = load_notion_config().get("token")
     if not token:
-        raise ValueError("还没有配置 NOTION_TOKEN。请把 Notion integration token 放进 .env.local。")
+        raise ValueError("还没有配置你的 Notion token。可以先只保存在 Job Assistant，或在 Notion 页填入自己的配置。")
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         f"https://api.notion.com/v1{path}",
@@ -5449,9 +6842,9 @@ def list_notion_application_jobs() -> list[dict]:
 
 
 def sync_notion(job_id: int | None = None) -> dict:
-    database_id = os.environ.get("NOTION_DATABASE_ID")
+    database_id = load_notion_config().get("database_id")
     if not database_id:
-        raise ValueError("还没有配置 NOTION_DATABASE_ID。请把 Notion 数据库 ID 放进 .env.local。")
+        raise ValueError("还没有配置你的 Notion database ID。可以先只保存在 Job Assistant，或在 Notion 页填入自己的配置。")
 
     if job_id:
         candidates = [get_job(job_id)]
@@ -5700,14 +7093,14 @@ def apply_assist(job_id: int) -> dict:
         raise ValueError("Playwright is not installed. Run: python -m pip install -r requirements.txt && python -m playwright install chromium")
 
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    payload_path = APPLY_ASSIST_DIR / f"job-{job_id}-{stamp}.json"
-    result_path = APPLY_ASSIST_DIR / f"job-{job_id}-{stamp}-result.json"
-    log_path = APPLY_ASSIST_DIR / f"job-{job_id}-{stamp}.log"
+    payload_path = current_apply_assist_dir() / f"job-{job_id}-{stamp}.json"
+    result_path = current_apply_assist_dir() / f"job-{job_id}-{stamp}-result.json"
+    log_path = current_apply_assist_dir() / f"job-{job_id}-{stamp}.log"
     payload = {
         "job": job,
         "profile": profile,
         "custom_questions": questions,
-        "browser_profile_dir": str(BROWSER_PROFILE_DIR),
+        "browser_profile_dir": str(current_browser_profile_dir()),
         "result_path": str(result_path),
         "review_required": True,
     }
@@ -5747,9 +7140,13 @@ class CareerHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
+        previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
         try:
+            REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
             if parsed.path == "/api/health":
                 json_response(self, health_payload())
+            elif parsed.path == "/api/auth/config":
+                json_response(self, auth_config_payload())
             elif parsed.path == "/api/summary":
                 json_response(self, summary())
             elif parsed.path == "/api/regions":
@@ -5760,6 +7157,17 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 json_response(self, load_user_context())
             elif parsed.path == "/api/company-catalog":
                 json_response(self, company_catalog((params.get("region") or [""])[0] or None, (params.get("city") or [""])[0] or None))
+            elif parsed.path == "/api/company-jobs":
+                company_id = int((params.get("company_id") or ["0"])[0] or 0)
+                json_response(
+                    self,
+                    company_jobs_payload(
+                        (params.get("company") or [""])[0],
+                        (params.get("region") or [""])[0] or None,
+                        (params.get("city") or [""])[0] or None,
+                        company_id or None,
+                    ),
+                )
             elif parsed.path == "/api/daily/status":
                 json_response(self, daily_status((params.get("region") or [""])[0] or None))
             elif parsed.path == "/api/profile":
@@ -5790,16 +7198,30 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 json_response(self, notion_schema())
             elif parsed.path == "/api/notion-status":
                 json_response(self, notion_status())
+            elif parsed.path == "/api/notion-config":
+                json_response(self, notion_status())
             elif parsed.path == "/api/report/today":
                 json_response(self, generate_report())
             else:
                 super().do_GET()
+        except AuthError as exc:
+            json_response(self, {"error": str(exc), "auth_required": True}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        finally:
+            if previous_user_id is None:
+                try:
+                    delattr(REQUEST_CONTEXT, "user_id")
+                except AttributeError:
+                    pass
+            else:
+                REQUEST_CONTEXT.user_id = previous_user_id
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
         try:
+            REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
             if parsed.path == "/api/jobs":
                 json_response(self, upsert_job(read_json(self)), HTTPStatus.CREATED)
                 return
@@ -5857,6 +7279,10 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 json_response(self, scan_sources(region=payload.get("region")))
                 return
 
+            if parsed.path == "/api/notion-config":
+                json_response(self, save_notion_config(read_json(self)))
+                return
+
             if parsed.path == "/api/open-path":
                 json_response(self, open_local_path(read_json(self)))
                 return
@@ -5890,12 +7316,24 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 return
 
             json_response(self, {"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        except AuthError as exc:
+            json_response(self, {"error": str(exc), "auth_required": True}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        finally:
+            if previous_user_id is None:
+                try:
+                    delattr(REQUEST_CONTEXT, "user_id")
+                except AttributeError:
+                    pass
+            else:
+                REQUEST_CONTEXT.user_id = previous_user_id
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
+        previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
         try:
+            REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
             if parsed.path == "/api/career-fit/preferences":
                 json_response(self, {"preferences": save_career_preferences(read_json(self)), "career_fit": career_fit()})
                 return
@@ -5907,19 +7345,41 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 json_response(self, update_watch_company(int(watch_match.group(1)), read_json(self)))
                 return
             json_response(self, {"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        except AuthError as exc:
+            json_response(self, {"error": str(exc), "auth_required": True}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        finally:
+            if previous_user_id is None:
+                try:
+                    delattr(REQUEST_CONTEXT, "user_id")
+                except AttributeError:
+                    pass
+            else:
+                REQUEST_CONTEXT.user_id = previous_user_id
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
+        previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
         try:
+            REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
             watch_match = re.match(r"^/api/watchlist/(\d+)$", parsed.path)
             if watch_match:
                 json_response(self, delete_watch_company(int(watch_match.group(1))))
                 return
             json_response(self, {"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        except AuthError as exc:
+            json_response(self, {"error": str(exc), "auth_required": True}, HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        finally:
+            if previous_user_id is None:
+                try:
+                    delattr(REQUEST_CONTEXT, "user_id")
+                except AttributeError:
+                    pass
+            else:
+                REQUEST_CONTEXT.user_id = previous_user_id
 
 
 def main() -> None:
@@ -5930,7 +7390,7 @@ def main() -> None:
     print(f"Job Assistant running at http://{display_host}:{APP_PORT}")
     if display_host != APP_HOST:
         print(f"Listening on {APP_HOST}:{APP_PORT}")
-    print(f"Database: {DB_PATH}")
+    print(f"Database: {current_db_path()}")
     server.serve_forever()
 
 

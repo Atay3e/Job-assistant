@@ -10,10 +10,29 @@
       }
     </script>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css?v=20260623-profile-options" />
+    <link rel="stylesheet" href="/styles.css?v=20260626-multi-user" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
   <body>
     <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+
+    <section id="authScreen" class="auth-screen" hidden>
+      <form id="authForm" class="auth-card">
+        <div>
+          <p class="section-kicker">Job Assistant 账号</p>
+          <h1>登录后保存你的求职资料</h1>
+          <p class="small-text">每个朋友会有自己的画像、简历分析、投递队列和已投递记录，不会互相覆盖。</p>
+        </div>
+        <label>
+          <span>Email</span>
+          <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required />
+        </label>
+        <div class="form-actions wide">
+          <span id="authStatus" class="form-status"></span>
+          <button class="primary-button" type="submit">发送登录链接</button>
+        </div>
+      </form>
+    </section>
 
     <div class="app-shell">
       <aside class="rail">
@@ -38,6 +57,10 @@
         <div class="rail-note">
           <span class="status-dot"></span>
           最终提交前必须由你确认
+        </div>
+        <div id="accountBox" class="account-box" hidden>
+          <span id="accountEmail">已登录</span>
+          <button id="signOutBtn" class="rail-action-button" type="button">退出</button>
         </div>
       </aside>
 
@@ -224,7 +247,7 @@
                   </button>
                   <button class="recommendation-tab" data-recommendation-view="general">
                     <span>全部高分</span>
-                    <small>基础评分优先</small>
+                    <small>新岗位优先 · 分数保底</small>
                     <strong id="generalJobCount">0</strong>
                   </button>
                 </div>
@@ -305,7 +328,7 @@
                 <div class="ops-card-head">
                   <div>
                     <p class="section-kicker">投递队列</p>
-                    <h2>今天下一步</h2>
+                    <h2>队列与今日已投</h2>
                   </div>
                   <span id="queueMiniCount" class="status-pill">0</span>
                 </div>
@@ -402,6 +425,7 @@
               <p class="section-kicker">投递队列</p>
               <h2>投递队列</h2>
             </div>
+            <span id="queueListStatus" class="status-pill">0 个待投递</span>
           </div>
           <div id="queueList" class="job-list compact"></div>
         </section>
@@ -423,6 +447,10 @@
                 <button class="segment-button tracker-mode-button active" data-tracker-mode="all">全部</button>
                 <button class="segment-button tracker-mode-button" data-tracker-mode="day">按日</button>
                 <button class="segment-button tracker-mode-button" data-tracker-mode="month">按月</button>
+              </div>
+              <div class="segment" aria-label="投递状态筛选">
+                <button class="segment-button tracker-status-button active" data-tracker-status="all">全部状态</button>
+                <button class="segment-button tracker-status-button" data-tracker-status="Applied">已投递</button>
               </div>
               <label class="compact-label" id="trackerDateLabel">
                 <span>具体日期</span>
@@ -531,6 +559,25 @@
             </button>
           </div>
           <p id="notionStatus" class="form-status"></p>
+          <form id="notionConfigForm" class="panel notion-config-form">
+            <div>
+              <p class="section-kicker">个人配置</p>
+              <h2>只同步当前登录用户</h2>
+              <p class="small-text">不配置时，投递记录仍会保存在 Job Assistant；配置后只同步你自己的已投递/投递队列。</p>
+            </div>
+            <label class="wide">
+              <span>Notion token</span>
+              <input name="token" type="password" autocomplete="off" placeholder="secret_..." />
+            </label>
+            <label class="wide">
+              <span>Database ID</span>
+              <input name="database_id" autocomplete="off" placeholder="Notion database id" />
+            </label>
+            <div class="form-actions wide">
+              <span id="notionConfigSaveStatus" class="form-status"></span>
+              <button class="secondary-button" type="submit">保存 Notion 配置</button>
+            </div>
+          </form>
           <div class="panel notion-guide">
             <div>
               <p class="section-kicker">投递状态</p>
@@ -657,6 +704,6 @@
       <div id="detailBody" class="detail-body"></div>
     </dialog>
 
-    <script src="/app.js?v=20260623-visual-polish"></script>
+    <script src="/app.js?v=20260626-multi-user"></script>
   </body>
 </html>
