@@ -2,23 +2,21 @@ services:
   - type: web
     name: job-assistant
     env: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     autoDeploy: true
-    disk:
-      name: app-data
-      mountPath: /data
-      sizeGB: 5
     envVars:
       - key: JOB_ASSISTANT_HOST
         value: 0.0.0.0
       - key: JOB_ASSISTANT_DATA_DIR
-        value: /data/app-data
+        value: /tmp/job-assistant/app-data
       - key: JOB_ASSISTANT_WORKSPACE_DIR
-        value: /data/workspace
+        value: /tmp/job-assistant/workspace
       - key: JOB_ASSISTANT_REQUIRE_AUTH
         value: "1"
+      - key: SUPABASE_STORAGE_BUCKET
+        value: job-assistant-users
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

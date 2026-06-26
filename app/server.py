@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -14,11 +15,12 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
+import zipfile
 from contextlib import contextmanager
 from html import unescape
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
 
 try:
@@ -72,6 +74,10 @@ LOCAL_USER_ID = os.environ.get("JOB_ASSISTANT_LOCAL_USER_ID", "local-owner")
 REQUEST_CONTEXT = threading.local()
 INITIALIZED_DB_PATHS: set[str] = set()
 DB_INIT_LOCK = threading.RLock()
+CLOUD_STATE_LOADED: set[str] = set()
+CLOUD_STATE_BUCKET_READY: set[str] = set()
+CLOUD_STATE_LOCK = threading.RLock()
+CLOUD_STATE_USER_LOCKS: dict[str, threading.RLock] = {}
 
 DATE_FMT = "%Y-%m-%d"
 
@@ -1608,6 +1614,214 @@ def current_notion_config_path() -> Path:
     return current_data_dir() / "notion_config.json"
 
 
+def supabase_base_url() -> str:
+    return (os.environ.get("SUPABASE_URL") or "").rstrip("/")
+
+
+def supabase_service_role_key() -> str:
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+
+def cloud_state_bucket() -> str:
+    return os.environ.get("SUPABASE_STORAGE_BUCKET", "job-assistant-users")
+
+
+def cloud_state_enabled() -> bool:
+    if not (supabase_base_url() and supabase_service_role_key()):
+        return False
+    return auth_required() or truthy_env("JOB_ASSISTANT_CLOUD_STATE")
+
+
+def cloud_state_user_key(user_id: str | None = None) -> str:
+    return safe_user_id(user_id or request_user_id())
+
+
+def cloud_state_object_path(user_id: str | None = None) -> str:
+    return f"{cloud_state_user_key(user_id)}/state.zip"
+
+
+def cloud_state_lock_for(user_id: str | None = None) -> threading.RLock:
+    key = cloud_state_user_key(user_id)
+    with CLOUD_STATE_LOCK:
+        lock = CLOUD_STATE_USER_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            CLOUD_STATE_USER_LOCKS[key] = lock
+        return lock
+
+
+def supabase_storage_request(
+    method: str,
+    path: str,
+    data: bytes | None = None,
+    headers: dict | None = None,
+    tolerate_404: bool = False,
+) -> tuple[int, bytes]:
+    base = supabase_base_url()
+    service_key = supabase_service_role_key()
+    if not base or not service_key:
+        raise ValueError("Supabase Storage is not configured.")
+    request = urllib.request.Request(
+        f"{base}/storage/v1{path}",
+        data=data,
+        method=method,
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            **(headers or {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        if tolerate_404 and exc.code == 404:
+            return exc.code, body
+        detail = body.decode("utf-8", errors="ignore")
+        raise ValueError(f"Supabase Storage error {exc.code}: {detail}") from exc
+
+
+def ensure_cloud_state_bucket() -> None:
+    if not cloud_state_enabled():
+        return
+    bucket = cloud_state_bucket()
+    if bucket in CLOUD_STATE_BUCKET_READY:
+        return
+    with CLOUD_STATE_LOCK:
+        if bucket in CLOUD_STATE_BUCKET_READY:
+            return
+        status, _ = supabase_storage_request("GET", f"/bucket/{quote_plus(bucket)}", tolerate_404=True)
+        if status == 404:
+            payload = json.dumps({"id": bucket, "name": bucket, "public": False}).encode("utf-8")
+            supabase_storage_request(
+                "POST",
+                "/bucket",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+        CLOUD_STATE_BUCKET_READY.add(bucket)
+
+
+def user_state_paths() -> list[tuple[str, Path]]:
+    return [
+        ("data", current_data_dir()),
+        ("workspace", current_workspace_dir()),
+    ]
+
+
+def should_skip_cloud_path(path: Path) -> bool:
+    ignored_parts = {"browser-profile", "__pycache__"}
+    return any(part in ignored_parts for part in path.parts) or path.name in {".DS_Store"}
+
+
+def build_user_state_archive() -> bytes:
+    ensure_dirs()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for prefix, root in user_state_paths():
+            if not root.exists():
+                continue
+            for path in root.rglob("*"):
+                if should_skip_cloud_path(path):
+                    continue
+                relative = path.relative_to(root)
+                archive_name = PurePosixPath(prefix, *relative.parts).as_posix()
+                if path.is_dir():
+                    archive.writestr(f"{archive_name}/", b"")
+                    continue
+                try:
+                    archive.write(path, archive_name)
+                except FileNotFoundError:
+                    continue
+    return buffer.getvalue()
+
+
+def restore_user_state_archive(payload: bytes) -> bool:
+    if not payload:
+        return False
+    ensure_dirs()
+    roots = {prefix: root.resolve() for prefix, root in user_state_paths()}
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        for info in archive.infolist():
+            posix_path = PurePosixPath(info.filename)
+            parts = posix_path.parts
+            if len(parts) < 2 or parts[0] not in roots:
+                continue
+            target_root = roots[parts[0]]
+            target = (target_root / Path(*parts[1:])).resolve()
+            if target != target_root and target_root not in target.parents:
+                continue
+            if should_skip_cloud_path(target):
+                continue
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as source, target.open("wb") as output:
+                output.write(source.read())
+    return True
+
+
+def ensure_cloud_state_loaded() -> None:
+    if not cloud_state_enabled() or not scoped_storage_enabled():
+        return
+    user_key = cloud_state_user_key()
+    if user_key in CLOUD_STATE_LOADED:
+        return
+    with cloud_state_lock_for(user_key):
+        if user_key in CLOUD_STATE_LOADED:
+            return
+        ensure_cloud_state_bucket()
+        object_path = quote_plus(cloud_state_object_path(user_key)).replace("%2F", "/")
+        status, payload = supabase_storage_request(
+            "GET",
+            f"/object/{quote_plus(cloud_state_bucket())}/{object_path}",
+            tolerate_404=True,
+        )
+        if status != 404:
+            restore_user_state_archive(payload)
+        CLOUD_STATE_LOADED.add(user_key)
+
+
+def sync_cloud_state(reason: str = "") -> bool:
+    if not cloud_state_enabled() or not scoped_storage_enabled():
+        return False
+    user_key = cloud_state_user_key()
+    with cloud_state_lock_for(user_key):
+        ensure_cloud_state_loaded()
+        ensure_cloud_state_bucket()
+        payload = build_user_state_archive()
+        object_path = quote_plus(cloud_state_object_path(user_key)).replace("%2F", "/")
+        supabase_storage_request(
+            "POST",
+            f"/object/{quote_plus(cloud_state_bucket())}/{object_path}",
+            data=payload,
+            headers={
+                "Content-Type": "application/zip",
+                "x-upsert": "true",
+                "Cache-Control": "no-store",
+            },
+        )
+        CLOUD_STATE_LOADED.add(user_key)
+        return True
+
+
+def safe_sync_cloud_state(reason: str = "") -> None:
+    try:
+        sync_cloud_state(reason)
+    except Exception as exc:
+        print(f"Cloud state sync failed ({reason or 'request'}): {exc}", file=sys.stderr)
+
+
+def should_sync_after_request(method: str, path: str) -> bool:
+    if not path.startswith("/api/") or is_public_api_path(path):
+        return False
+    if method in {"POST", "PUT", "DELETE"} and path != "/api/open-path":
+        return True
+    return method == "GET" and path == "/api/report/today"
+
+
 @contextmanager
 def request_user_context(user_id: str):
     previous = getattr(REQUEST_CONTEXT, "user_id", None)
@@ -1697,12 +1911,15 @@ def health_payload() -> dict:
         "time": now_iso(),
         "database": str(db_path),
         "storage": "scoped" if scoped_storage_enabled() else "local",
+        "cloud_state": "enabled" if cloud_state_enabled() else "disabled",
+        "cloud_bucket": cloud_state_bucket() if cloud_state_enabled() else "",
     }
 
 
 @contextmanager
 def get_db():
     ensure_dirs()
+    ensure_cloud_state_loaded()
     db_path = current_db_path()
     if not getattr(REQUEST_CONTEXT, "initializing_db", False) and str(db_path) not in INITIALIZED_DB_PATHS:
         with DB_INIT_LOCK:
@@ -2223,6 +2440,7 @@ def default_profile() -> dict:
 
 def load_profile() -> dict:
     ensure_dirs()
+    ensure_cloud_state_loaded()
     profile = default_profile()
     profile_path = current_profile_path()
     if profile_path.exists():
@@ -2352,6 +2570,7 @@ def merge_user_context(stored: dict) -> dict:
 
 def load_user_context() -> dict:
     ensure_dirs()
+    ensure_cloud_state_loaded()
     context_path = current_user_context_path()
     if not context_path.exists():
         return default_user_context()
@@ -4895,6 +5114,7 @@ def _scan_async_worker(scan_run_id: int, triggered_by: str, forced: bool, region
         except Exception as exc:
             finish_scan_run(scan_run_id, "failed", 0, 0, 0, 0, [{"source": "scan", "error": str(exc)}])
         finally:
+            safe_sync_cloud_state("async_scan")
             with SCAN_THREADS_LOCK:
                 SCAN_THREADS.pop(scan_thread_key(scan_run_id, user_id), None)
 
@@ -7141,8 +7361,11 @@ class CareerHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
         previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
+        sync_after_request = False
         try:
             REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
+            ensure_cloud_state_loaded()
+            sync_after_request = should_sync_after_request("GET", parsed.path)
             if parsed.path == "/api/health":
                 json_response(self, health_payload())
             elif parsed.path == "/api/auth/config":
@@ -7209,6 +7432,8 @@ class CareerHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         finally:
+            if sync_after_request:
+                safe_sync_cloud_state(f"GET {parsed.path}")
             if previous_user_id is None:
                 try:
                     delattr(REQUEST_CONTEXT, "user_id")
@@ -7220,8 +7445,11 @@ class CareerHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
+        sync_after_request = False
         try:
             REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
+            ensure_cloud_state_loaded()
+            sync_after_request = should_sync_after_request("POST", parsed.path)
             if parsed.path == "/api/jobs":
                 json_response(self, upsert_job(read_json(self)), HTTPStatus.CREATED)
                 return
@@ -7321,6 +7549,8 @@ class CareerHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         finally:
+            if sync_after_request:
+                safe_sync_cloud_state(f"POST {parsed.path}")
             if previous_user_id is None:
                 try:
                     delattr(REQUEST_CONTEXT, "user_id")
@@ -7332,8 +7562,11 @@ class CareerHandler(SimpleHTTPRequestHandler):
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
         previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
+        sync_after_request = False
         try:
             REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
+            ensure_cloud_state_loaded()
+            sync_after_request = should_sync_after_request("PUT", parsed.path)
             if parsed.path == "/api/career-fit/preferences":
                 json_response(self, {"preferences": save_career_preferences(read_json(self)), "career_fit": career_fit()})
                 return
@@ -7350,6 +7583,8 @@ class CareerHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         finally:
+            if sync_after_request:
+                safe_sync_cloud_state(f"PUT {parsed.path}")
             if previous_user_id is None:
                 try:
                     delattr(REQUEST_CONTEXT, "user_id")
@@ -7361,8 +7596,11 @@ class CareerHandler(SimpleHTTPRequestHandler):
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
         previous_user_id = getattr(REQUEST_CONTEXT, "user_id", None)
+        sync_after_request = False
         try:
             REQUEST_CONTEXT.user_id = user_id_for_request(self, parsed.path)
+            ensure_cloud_state_loaded()
+            sync_after_request = should_sync_after_request("DELETE", parsed.path)
             watch_match = re.match(r"^/api/watchlist/(\d+)$", parsed.path)
             if watch_match:
                 json_response(self, delete_watch_company(int(watch_match.group(1))))
@@ -7373,6 +7611,8 @@ class CareerHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         finally:
+            if sync_after_request:
+                safe_sync_cloud_state(f"DELETE {parsed.path}")
             if previous_user_id is None:
                 try:
                     delattr(REQUEST_CONTEXT, "user_id")

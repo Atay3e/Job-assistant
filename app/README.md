@@ -38,6 +38,19 @@ JOB_ASSISTANT_RESUME=
 
 云平台通常会自动提供 `PORT`，服务会优先使用它。
 
+多人免费部署时再填写：
+
+```text
+JOB_ASSISTANT_REQUIRE_AUTH=1
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_JWT_SECRET=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_STORAGE_BUCKET=job-assistant-users
+```
+
+Render Free 的本地文件是临时运行缓存；登录用户的画像、简历、队列、已投递、关注公司、扫描记录和 Notion 配置会同步到 Supabase Storage。
+
 ## 公开部署
 
 不要把 `127.0.0.1` 发给别人。它只代表访问者自己的电脑。

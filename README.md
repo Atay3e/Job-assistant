@@ -10,7 +10,7 @@
 - Daily scanner with visible source status
 - 5.0 base scoring plus preference, region, city, and watched-company ranking
 - Browser-assisted application flow that stops before final submission
-- Local SQLite source of truth with optional per-user auth scoping
+- Local SQLite runtime with optional Supabase Auth and Storage persistence
 
 ## Run Locally
 
@@ -46,7 +46,7 @@ The repo includes:
 
 See [docs/deployment.md](docs/deployment.md).
 
-The included Render blueprint uses a persistent disk and Supabase Auth settings so friends can have separate accounts. Local development still works without login unless `JOB_ASSISTANT_REQUIRE_AUTH=1` is set.
+The included Render blueprint can run on the free plan. With Supabase Auth and Storage configured, friends can have separate accounts and durable saved data without a Render persistent disk. Local development still works without login unless `JOB_ASSISTANT_REQUIRE_AUTH=1` is set.
 
 ## Privacy
 

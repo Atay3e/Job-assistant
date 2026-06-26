@@ -22,20 +22,20 @@ Use the default blueprint settings:
 
 - Service name: `job-assistant`
 - Environment: Docker
-- Plan: starter
+- Plan: free
 - Health check: `/api/health`
-- Persistent disk: `/data`
 
-The blueprint stores runtime files under the persistent disk:
+The blueprint uses temporary local files for the running container and Supabase Storage for durable user state:
 
 ```text
 JOB_ASSISTANT_HOST=0.0.0.0
-JOB_ASSISTANT_DATA_DIR=/data/app-data
-JOB_ASSISTANT_WORKSPACE_DIR=/data/workspace
+JOB_ASSISTANT_DATA_DIR=/tmp/job-assistant/app-data
+JOB_ASSISTANT_WORKSPACE_DIR=/tmp/job-assistant/workspace
 JOB_ASSISTANT_REQUIRE_AUTH=1
+SUPABASE_STORAGE_BUCKET=job-assistant-users
 ```
 
-Render services without a persistent disk use temporary storage, so uploaded resumes, SQLite data, and generated workspace files are not guaranteed to survive restarts or redeploys.
+Render Free services use temporary storage, so the app automatically stores each authenticated user's state bundle in Supabase Storage. On restart or redeploy, the first logged-in request restores that user's profile, resumes, queue, applied records, watched companies, scan records, generated materials, and Notion settings.
 
 ## Supabase Auth
 
@@ -46,14 +46,17 @@ SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_JWT_SECRET=
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_STORAGE_BUCKET=job-assistant-users
 APP_SECRET_KEY=
 ```
 
-With auth enabled, every private API request requires a Supabase login token. Each user gets a separate data directory under `/data/app-data/users/<user_id>/`, so preferences, resumes, queues, applied jobs, watched companies, scan records, and Notion settings do not mix.
+With auth enabled, every private API request requires a Supabase login token. Each user gets a separate temporary data directory under `JOB_ASSISTANT_DATA_DIR/users/<user_id>/`, and that directory is synced to Supabase Storage after writes. Preferences, resumes, queues, applied jobs, watched companies, scan records, generated files, and Notion settings do not mix.
+
+The backend uses the service role key only on the server to create and update private state archives. Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
 
 ## Owner Data Migration
 
-After creating your own Supabase account, copy your existing local data into your account-scoped storage:
+After creating your own Supabase account, copy your existing local data into your account-scoped local folder, then sign in once and make any save action so it syncs to Supabase Storage:
 
 ```text
 cd app

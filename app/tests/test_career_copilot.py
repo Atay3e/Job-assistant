@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +34,15 @@ class TempAppMixin:
             "BROWSER_PROFILE_DIR": server.BROWSER_PROFILE_DIR,
             "RESUME_UPLOAD_DIR": server.RESUME_UPLOAD_DIR,
         }
+        self.old_env = {key: os.environ.get(key) for key in [
+            "JOB_ASSISTANT_REQUIRE_AUTH",
+            "JOB_ASSISTANT_CLOUD_STATE",
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_STORAGE_BUCKET",
+        ]}
+        for key in self.old_env:
+            os.environ.pop(key, None)
         server.DATA_DIR = root / "data"
         server.WORKSPACE_DIR = root / "workspace"
         server.DB_PATH = server.DATA_DIR / "career_copilot.sqlite"
@@ -41,13 +52,24 @@ class TempAppMixin:
         server.BROWSER_PROFILE_DIR = server.DATA_DIR / "browser-profile"
         server.RESUME_UPLOAD_DIR = server.DATA_DIR / "resumes"
         server.INITIALIZED_DB_PATHS.clear()
+        server.CLOUD_STATE_LOADED.clear()
+        server.CLOUD_STATE_BUCKET_READY.clear()
+        server.CLOUD_STATE_USER_LOCKS.clear()
         server.setup_db()
 
     def tearDown(self) -> None:
         server.SCAN_THREADS.clear()
         server.INITIALIZED_DB_PATHS.clear()
+        server.CLOUD_STATE_LOADED.clear()
+        server.CLOUD_STATE_BUCKET_READY.clear()
+        server.CLOUD_STATE_USER_LOCKS.clear()
         for key, value in self.old_paths.items():
             setattr(server, key, value)
+        for key, value in self.old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.tmp.cleanup()
 
 
@@ -88,6 +110,29 @@ class MultiUserStorageTests(TempAppMixin, unittest.TestCase):
 
         self.assertEqual(len([job for job in jobs_a if job["company"] == "Scoped Co"]), 1)
         self.assertEqual(len([job for job in jobs_b if job["company"] == "Scoped Co"]), 0)
+
+    def test_user_state_archive_restores_private_files_and_excludes_browser_profile(self):
+        with server.request_user_context("cloud-user"):
+            server.setup_db()
+            resume_file = server.current_resume_upload_dir() / "resume.txt"
+            resume_file.parent.mkdir(parents=True, exist_ok=True)
+            resume_file.write_text("resume body", encoding="utf-8")
+            workspace_file = server.current_workspace_dir() / "applications" / "draft.txt"
+            workspace_file.parent.mkdir(parents=True, exist_ok=True)
+            workspace_file.write_text("draft body", encoding="utf-8")
+            browser_secret = server.current_browser_profile_dir() / "cookies.txt"
+            browser_secret.parent.mkdir(parents=True, exist_ok=True)
+            browser_secret.write_text("do not upload", encoding="utf-8")
+
+            archive = server.build_user_state_archive()
+            shutil.rmtree(server.current_data_dir())
+            shutil.rmtree(server.current_workspace_dir())
+            restored = server.restore_user_state_archive(archive)
+
+            self.assertTrue(restored)
+            self.assertEqual(resume_file.read_text(encoding="utf-8"), "resume body")
+            self.assertEqual(workspace_file.read_text(encoding="utf-8"), "draft body")
+            self.assertFalse(browser_secret.exists())
 
 
 class ParserTests(unittest.TestCase):
