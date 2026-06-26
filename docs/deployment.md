@@ -54,6 +54,15 @@ With auth enabled, every private API request requires a Supabase login token. Ea
 
 The backend uses the service role key only on the server to create and update private state archives. Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
 
+To avoid pasting secrets into chat, save those values locally in `app/.env.supabase.local` and run:
+
+```text
+cd app
+python scripts/configure_render_supabase.py
+```
+
+The file is ignored by Git.
+
 ## Owner Data Migration
 
 After creating your own Supabase account, copy your existing local data into your account-scoped local folder, then sign in once and make any save action so it syncs to Supabase Storage:
