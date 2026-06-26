@@ -10,8 +10,11 @@ ENV_FILE = APP_DIR / ".env.supabase.local"
 
 TEMPLATE = """# Fill these from your Supabase project.
 # Supabase Dashboard:
-# - Project URL and anon key: Project Settings > API
-# - Service role key: Project Settings > API > Project API keys
+# - Project URL: Project Settings > API
+# - Public browser key: Project Settings > API Keys > publishable key
+#   Legacy projects can use the anon key instead.
+# - Server key: Project Settings > API Keys > secret key
+#   Legacy projects can use the service_role key instead.
 # Optional:
 # - JWT secret: Project Settings > API > JWT Settings
 

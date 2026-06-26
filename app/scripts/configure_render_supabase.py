@@ -27,13 +27,22 @@ def looks_like_jwt(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$", value or ""))
 
 
+def looks_like_public_key(value: str) -> bool:
+    return looks_like_jwt(value) or (value or "").startswith("sb_publishable_")
+
+
+def looks_like_admin_key(value: str) -> bool:
+    return looks_like_jwt(value) or (value or "").startswith("sb_secret_")
+
+
 def validate_values(values: dict[str, str]) -> None:
     url = values["SUPABASE_URL"].rstrip("/")
     if not re.match(r"^https://[A-Za-z0-9-]+\.supabase\.co$", url):
         raise SystemExit("SUPABASE_URL should look like https://xxxx.supabase.co")
-    for key in ["SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]:
-        if not looks_like_jwt(values[key]):
-            raise SystemExit(f"{key} does not look like a Supabase JWT key.")
+    if not looks_like_public_key(values["SUPABASE_ANON_KEY"]):
+        raise SystemExit("SUPABASE_ANON_KEY does not look like a Supabase anon or publishable key.")
+    if not looks_like_admin_key(values["SUPABASE_SERVICE_ROLE_KEY"]):
+        raise SystemExit("SUPABASE_SERVICE_ROLE_KEY does not look like a Supabase service_role or secret key.")
     if values.get("SUPABASE_JWT_SECRET") and len(values["SUPABASE_JWT_SECRET"]) < 20:
         raise SystemExit("SUPABASE_JWT_SECRET looks too short.")
     request = urllib.request.Request(
@@ -63,6 +72,10 @@ def load_env(path: Path) -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip('"').strip("'")
+    if not values.get("SUPABASE_ANON_KEY") and values.get("SUPABASE_PUBLISHABLE_KEY"):
+        values["SUPABASE_ANON_KEY"] = values["SUPABASE_PUBLISHABLE_KEY"]
+    if not values.get("SUPABASE_SERVICE_ROLE_KEY") and values.get("SUPABASE_SECRET_KEY"):
+        values["SUPABASE_SERVICE_ROLE_KEY"] = values["SUPABASE_SECRET_KEY"]
     missing = [key for key in REQUIRED if not values.get(key)]
     if missing:
         raise SystemExit(f"Missing values in {path}: {', '.join(missing)}")

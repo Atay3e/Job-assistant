@@ -48,6 +48,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_STORAGE_BUCKET=job-assistant-users
 ```
 
+也可以直接双击 `Manual-Free-Cloud-Setup.command`，按提示从 Supabase 项目页面复制 Project URL、publishable/anon key、secret/service_role key。脚本会本地写入配置、更新 Render 并重新部署，密钥不会经过聊天窗口。
+
 Render Free 的本地文件是临时运行缓存；登录用户的画像、简历、队列、已投递、关注公司、扫描记录和 Notion 配置会同步到 Supabase Storage。
 
 ## 公开部署

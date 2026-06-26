@@ -38,7 +38,10 @@ class TempAppMixin:
             "JOB_ASSISTANT_REQUIRE_AUTH",
             "JOB_ASSISTANT_CLOUD_STATE",
             "SUPABASE_URL",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_PUBLISHABLE_KEY",
             "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_SECRET_KEY",
             "SUPABASE_STORAGE_BUCKET",
         ]}
         for key in self.old_env:
@@ -198,6 +201,40 @@ class MultiUserStorageTests(TempAppMixin, unittest.TestCase):
             self.assertEqual(restored_context["active_region"], "CN")
             self.assertEqual(restored_context["contexts"]["CN"]["city"], "Shanghai")
             self.assertTrue(any(item["url"] == job["url"] for item in restored_jobs))
+
+
+class SupabaseSetupScriptTests(unittest.TestCase):
+    def test_new_supabase_key_names_are_mapped_to_runtime_env(self):
+        from scripts import configure_render_supabase as setup
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env.supabase.local"
+            env_file.write_text(
+                "\n".join(
+                    [
+                        "SUPABASE_URL=https://example.supabase.co",
+                        "SUPABASE_PUBLISHABLE_KEY=sb_publishable_test",
+                        "SUPABASE_SECRET_KEY=sb_secret_test",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(setup.urllib.request, "urlopen", return_value=FakeResponse()):
+                values = setup.load_env(env_file)
+
+        self.assertEqual(values["SUPABASE_ANON_KEY"], "sb_publishable_test")
+        self.assertEqual(values["SUPABASE_SERVICE_ROLE_KEY"], "sb_secret_test")
+        self.assertEqual(values["JOB_ASSISTANT_REQUIRE_AUTH"], "1")
 
 
 class AuthTests(unittest.TestCase):

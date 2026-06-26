@@ -1526,7 +1526,7 @@ def truthy_env(name: str) -> bool:
 
 
 def supabase_auth_configured() -> bool:
-    return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_ANON_KEY"))
+    return bool(os.environ.get("SUPABASE_URL") and supabase_anon_key())
 
 
 def auth_required() -> bool:
@@ -1537,7 +1537,7 @@ def auth_config_payload() -> dict:
     return {
         "auth_required": auth_required(),
         "supabase_url": os.environ.get("SUPABASE_URL", ""),
-        "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+        "supabase_anon_key": supabase_anon_key(),
     }
 
 
@@ -1619,11 +1619,11 @@ def supabase_base_url() -> str:
 
 
 def supabase_anon_key() -> str:
-    return os.environ.get("SUPABASE_ANON_KEY", "")
+    return os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_PUBLISHABLE_KEY", "")
 
 
 def supabase_service_role_key() -> str:
-    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    return os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SECRET_KEY", "")
 
 
 def cloud_state_bucket() -> str:
