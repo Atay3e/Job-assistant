@@ -1173,6 +1173,7 @@ EMPLOYMENT_TYPE_VALUES = {"Internship", "Full-time", "Graduate", "Contract", "Un
 SALARY_PERIODS = {"monthly", "yearly", "daily", "hourly", "unknown"}
 LIMITED_SCAN_SOURCES = {"Indeed", "JobStreet"}
 REGION_CURRENCIES = {"SG": "SGD", "CN": "CNY", "HK": "HKD"}
+MIN_RESUME_DIRECTION_SCORE = 0.24
 WORK_AUTH_OPTIONS = {
     "SG": [
         {"value": "Student Pass", "label": "Student Pass"},
@@ -2514,19 +2515,19 @@ def default_region_context(region: str) -> dict:
     defaults = {
         "SG": {
             "work_authorisation": "Singapore work eligibility to be confirmed",
-            "target_directions": ["ai-product", "ux-product-design", "user-research"],
+            "target_directions": [],
             "job_types": ["Internship", "Graduate", "Full-time"],
             "employment_priority": "both",
         },
         "CN": {
             "work_authorisation": "China mainland work eligibility to be confirmed",
-            "target_directions": ["ai-product", "ux-product-design", "growth-content"],
+            "target_directions": [],
             "job_types": ["Internship", "Graduate", "Full-time"],
             "employment_priority": "both",
         },
         "HK": {
             "work_authorisation": "Hong Kong work eligibility to be confirmed",
-            "target_directions": ["ai-product", "ux-product-design", "product-ops"],
+            "target_directions": [],
             "job_types": ["Internship", "Graduate", "Full-time"],
             "employment_priority": "both",
         },
@@ -3152,26 +3153,32 @@ def evidence_snippets(text: str, keywords: list[str], limit: int = 3) -> list[st
     return snippets
 
 
+def score_resume_direction(text: str, direction: dict) -> dict:
+    lowered = text.lower()
+    keyword_hits = [kw for kw in direction["keywords"] if has_keyword(lowered, kw)]
+    evidence_hits = [kw for kw in direction["evidence"] if has_keyword(lowered, kw)]
+    snippets = evidence_snippets(text, direction["keywords"] + direction["evidence"], limit=2)
+    score = round(min(1.0, (len(keyword_hits) * 0.14) + (len(evidence_hits) * 0.18) + (0.16 if snippets else 0)), 2)
+    return {
+        "id": direction["id"],
+        "label": direction["label"],
+        "score": score,
+        "matched_keywords": sorted(set(keyword_hits + evidence_hits))[:10],
+        "evidence": snippets,
+        "gaps": direction["gaps"],
+        "source": "resume",
+    }
+
+
 def build_local_resume_analysis(text: str) -> dict:
     lowered = text.lower()
     directions = []
     evidence_items = []
     for direction in CAREER_DIRECTIONS:
-        keyword_hits = [kw for kw in direction["keywords"] if has_keyword(lowered, kw)]
-        evidence_hits = [kw for kw in direction["evidence"] if has_keyword(lowered, kw)]
-        snippets = evidence_snippets(text, direction["keywords"] + direction["evidence"], limit=2)
-        score = round(min(1.0, (len(keyword_hits) * 0.14) + (len(evidence_hits) * 0.18) + (0.16 if snippets else 0)), 2)
-        directions.append(
-            {
-                "id": direction["id"],
-                "label": direction["label"],
-                "score": score,
-                "matched_keywords": sorted(set(keyword_hits + evidence_hits))[:10],
-                "evidence": snippets,
-                "gaps": direction["gaps"],
-            }
-        )
-        for snippet in snippets:
+        scored = score_resume_direction(text, direction)
+        if scored["score"] >= MIN_RESUME_DIRECTION_SCORE:
+            directions.append(scored)
+        for snippet in scored["evidence"]:
             evidence_items.append({"direction_id": direction["id"], "direction": direction["label"], "text": snippet})
     directions.sort(key=lambda item: (item["score"], len(item["matched_keywords"])), reverse=True)
 
@@ -6211,12 +6218,6 @@ def active_preference_direction_ids() -> tuple[list[str], str]:
     selected = [item for item in preferences["selected_directions"] if career_direction_by_id(item)]
     if selected:
         return selected, "user_selected"
-    context_selected = [
-        item for item in active_region_context().get("target_directions", [])
-        if career_direction_by_id(item)
-    ]
-    if context_selected:
-        return context_selected, "user_context"
     active_resume = get_active_resume_version()
     analysis = latest_resume_analysis(active_resume.get("id")) if active_resume else latest_resume_analysis()
     if analysis:
@@ -6227,6 +6228,12 @@ def active_preference_direction_ids() -> tuple[list[str], str]:
         ][:3]
         if suggested:
             return suggested, "resume_analysis"
+    context_selected = [
+        item for item in active_region_context().get("target_directions", [])
+        if career_direction_by_id(item)
+    ]
+    if context_selected:
+        return context_selected, "user_context"
     return [], "base_score"
 
 

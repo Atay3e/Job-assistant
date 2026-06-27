@@ -490,6 +490,40 @@ class RecommendationTests(TempAppMixin, unittest.TestCase):
 
 
 class MultiRegionTests(TempAppMixin, unittest.TestCase):
+    def test_default_context_does_not_preselect_fixed_directions(self):
+        context = server.default_user_context()
+
+        for region_context in context["contexts"].values():
+            self.assertEqual(region_context["target_directions"], [])
+
+    def test_resume_analysis_only_returns_evidence_backed_directions(self):
+        analysis = server.build_local_resume_analysis(
+            """
+            Planned community content campaigns for a student club.
+            Wrote social media copy, managed editorial calendar, and tracked conversion from posts to event signups.
+            Improved audience segmentation for marketing experiments and documented campaign learnings.
+            """
+        )
+        direction_ids = [item["id"] for item in analysis["directions"]]
+
+        self.assertIn("growth-content", direction_ids)
+        self.assertNotIn("ai-product", direction_ids)
+        self.assertNotIn("ux-product-design", direction_ids)
+        self.assertTrue(all(item["score"] > 0 for item in analysis["directions"]))
+
+    def test_resume_analysis_beats_stale_context_directions_for_ranking(self):
+        server.save_user_context({"active_region": "SG", "context": {"target_directions": ["ai-product"]}})
+        server.save_uploaded_resume(
+            "growth-resume.txt",
+            b"Community content campaigns, copywriting, marketing experiments, conversion tracking, and audience segmentation.",
+            "text/plain",
+        )
+
+        direction_ids, source = server.active_preference_direction_ids()
+
+        self.assertEqual(source, "resume_analysis")
+        self.assertEqual(direction_ids, ["growth-content"])
+
     def test_profile_options_follow_region_currency_and_choices(self):
         sg_options = server.profile_options_payload("SG")
         cn_options = server.profile_options_payload("CN")

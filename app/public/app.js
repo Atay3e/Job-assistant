@@ -451,6 +451,38 @@ function suggestedDirectionIds(limit = 3) {
     .map((item) => item.id);
 }
 
+function directionOptionsById() {
+  return new Map((state.profileOptions.direction_options || []).map((item) => [item.value, item]));
+}
+
+function resumeSuggestedDirectionOptions(limit = 6) {
+  const byId = directionOptionsById();
+  return (state.careerFit?.suggested_directions || [])
+    .filter((item) => item.id && Number(item.score || 0) > 0 && byId.has(item.id))
+    .slice(0, limit)
+    .map((item) => {
+      const option = byId.get(item.id);
+      const score = Math.round(Number(item.score || 0) * 100);
+      return {
+        ...option,
+        label: `${option.label} · ${score}%`,
+        category: "简历推荐方向",
+        resume_score: item.score,
+      };
+    });
+}
+
+function directionOptionsForChoice(selectedValues = []) {
+  const suggested = resumeSuggestedDirectionOptions();
+  if (!resumeAnalyzed() || !suggested.length) return state.profileOptions.direction_options || [];
+  const suggestedIds = new Set(suggested.map((item) => item.value));
+  const byId = directionOptionsById();
+  const selectedOther = (selectedValues || [])
+    .filter((id) => !suggestedIds.has(id) && byId.has(id))
+    .map((id) => ({ ...byId.get(id), category: "手动保留方向" }));
+  return [...suggested, ...selectedOther];
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
   return value.replace("T", " ");
@@ -625,7 +657,7 @@ function renderUserContextControls() {
 
     renderOptionButtons("workAuthOptions", state.profileOptions.work_authorisation_options || [], [context.work_authorisation || ""], { target: "context:work_authorisation", multi: false });
     renderOptionButtons("contextPriorityOptions", state.profileOptions.employment_priority_options || [], [context.employment_priority || "both"], { target: "context:employment_priority", multi: false });
-    renderOptionButtons("contextDirectionOptions", state.profileOptions.direction_options || [], context.target_directions || [], { target: "context:target_directions" });
+    renderOptionButtons("contextDirectionOptions", directionOptionsForChoice(context.target_directions || []), context.target_directions || [], { target: "context:target_directions" });
     renderOptionButtons("contextJobTypeOptions", state.profileOptions.job_type_options || [], context.job_types || [], { target: "context:job_types" });
 
     setSelectOptions(document.getElementById("contextSalaryPeriod"), state.profileOptions.salary_period_options || [], context.salary_period || "monthly");
@@ -695,7 +727,7 @@ function renderOnboarding() {
     dot.classList.toggle("done", step < state.onboardingStep);
   });
   renderOptionButtons("onboardingPriorityOptions", state.profileOptions.employment_priority_options || [], [context.employment_priority || "both"], { target: "onboarding:employment_priority", multi: false });
-  renderGroupedOptionButtons("onboardingDirectionOptions", state.profileOptions.direction_options || [], context.target_directions || [], { target: "onboarding:target_directions" });
+  renderGroupedOptionButtons("onboardingDirectionOptions", directionOptionsForChoice(context.target_directions || []), context.target_directions || [], { target: "onboarding:target_directions" });
   renderOptionButtons("onboardingJobTypeOptions", state.profileOptions.job_type_options || [], context.job_types || [], { target: "onboarding:job_types" });
   renderOptionButtons("onboardingWorkAuthOptions", state.profileOptions.work_authorisation_options || [], [context.work_authorisation || ""], { target: "onboarding:work_authorisation", multi: false });
   setSelectOptions(document.getElementById("onboardingSalaryPeriod"), state.profileOptions.salary_period_options || [], context.salary_period || "monthly");
@@ -916,16 +948,28 @@ function renderCareerFit() {
   const analysis = fit.analysis;
   const active = fit.active_resume || {};
   const selected = new Set(fit.selected_directions || []);
-  const suggestedScores = new Map((fit.suggested_directions || []).map((item) => [item.id, item.score]));
+  const suggested = (fit.suggested_directions || []).filter((item) => item.id && Number(item.score || 0) > 0);
+  const suggestedScores = new Map(suggested.map((item) => [item.id, item.score]));
 
   document.getElementById("activeResume").textContent = active.stored_path
     ? `当前简历：${active.original_filename || active.filename || fileName(active.stored_path)} · ${active.stored_path}`
     : "当前还没有可分析的简历。";
   document.getElementById("careerFitSummary").textContent = analysis?.summary || "还没有分析结果。上传简历或点击本地分析后，这里会生成适合投递的方向。";
-  document.getElementById("directionChips").innerHTML = (fit.all_directions || []).map((direction) => {
+  const suggestedIds = new Set(suggested.map((item) => item.id));
+  const manualDirections = (fit.all_directions || []).filter((direction) => !suggestedIds.has(direction.id));
+  const chip = (direction) => {
     const score = suggestedScores.has(direction.id) ? ` ${Math.round(suggestedScores.get(direction.id) * 100)}%` : "";
     return `<button class="chip-button ${selected.has(direction.id) ? "active" : ""}" data-direction-id="${escapeHtml(direction.id)}">${escapeHtml(direction.label)}${score}</button>`;
-  }).join("");
+  };
+  document.getElementById("directionChips").innerHTML = suggested.length
+    ? `
+      ${suggested.map((direction) => chip(direction)).join("")}
+      <details class="custom-option direction-more">
+        <summary>其它候选方向</summary>
+        <div class="chip-row">${manualDirections.map((direction) => chip(direction)).join("")}</div>
+      </details>
+    `
+    : emptyState(analysis ? "这份简历暂时没有明显方向信号。可以补充项目经历，或在资料页手动添加方向。" : "分析简历后会按内容生成方向。");
 
   const strengths = analysis?.strengths || [];
   document.getElementById("strengthList").innerHTML = strengths.length
