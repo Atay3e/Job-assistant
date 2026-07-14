@@ -2414,6 +2414,54 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
 
 
 class RecommendationTests(TempAppMixin, unittest.TestCase):
+    def test_decision_summary_is_plain_language_and_keeps_the_key_pathway_tradeoff(self):
+        summary = server.job_decision_summary({
+            "employment_type": "Internship",
+            "matched_directions": [{"label": "UX/Product Design", "keywords": ["figma", "prototype"]}],
+            "conversion_signal": "possible",
+            "visa_sponsorship_signal": "unclear",
+            "language_signal": "chinese_friendly_possible",
+            "listing_freshness_status": "fresh",
+            "source": "ATS",
+            "source_count": 2,
+            "user_tag_mutes": [],
+            "direction_mismatch_adjustment": 0,
+        })
+
+        self.assertIn("实习", summary)
+        self.assertIn("UX/Product Design", summary)
+        self.assertIn("转正", summary)
+        self.assertIn("工签需确认", summary)
+        self.assertNotIn("figma", summary.lower())
+        self.assertNotIn(":", summary)
+        self.assertLessEqual(len(summary), 72)
+
+    def test_ranked_job_and_workbench_payload_include_decision_summary(self):
+        ranked = server.rank_job_with_preferences({
+            "id": 99,
+            "company": "Clear Choice",
+            "position": "Product Design Intern",
+            "source": "Company ATS",
+            "url": "https://example.com/product-design-intern",
+            "status": "Recommended",
+            "score": 4.4,
+            "region": "SG",
+            "source_region": "SG",
+            "city": "Singapore",
+            "location": "Singapore",
+            "found_date": server.today(),
+            "last_checked_at": server.now_iso(),
+            "updated_at": server.now_iso(),
+            "eligibility_flags": [],
+            "employment_type": "Internship",
+            "conversion_signal": "possible",
+            "visa_sponsorship_signal": "unclear",
+            "language_signal": "unknown",
+        }, ["ux-product-design"], {"ux-product-design": 1.0}, "SG", set(), server.active_region_context("SG"))
+
+        self.assertTrue(ranked["decision_summary"])
+        self.assertEqual(server.workbench_job_payload(ranked)["decision_summary"], ranked["decision_summary"])
+
     def test_listing_freshness_excludes_old_unverified_linkedin_but_keeps_internsg_with_penalty(self):
         stale_date = (server.dt.date.today() - server.dt.timedelta(days=35)).strftime(server.DATE_FMT)
         common = {

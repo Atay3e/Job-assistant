@@ -9188,6 +9188,70 @@ def language_signal_label(value: str) -> str:
     }.get(value or "unknown", "语言未知")
 
 
+def job_decision_summary(job: dict) -> str:
+    employment_label = {
+        "Internship": "实习岗位",
+        "Graduate": "毕业生岗位",
+        "Full-time": "正式岗位",
+        "Contract": "合同岗位",
+    }.get(job.get("employment_type") or "Unknown", "岗位方向")
+    direction_mismatch = bool(job.get("direction_mismatch_adjustment"))
+    matched = job.get("matched_directions") or []
+    lead = employment_label
+    if matched and not direction_mismatch:
+        direction_label = clean_text(matched[0].get("label") or "")[:24]
+        if direction_label:
+            lead = f"{lead}，与你的 {direction_label} 方向匹配"
+
+    conversion = job.get("conversion_signal") or ("strong" if job.get("conversion_opportunity") else "unknown")
+    visa = job.get("visa_sponsorship_signal") or "unknown"
+    language = job.get("language_signal") or "unknown"
+    positive: list[str] = []
+    cautions: list[str] = []
+
+    if conversion == "strong":
+        positive.append("明确可转正")
+    elif conversion == "possible":
+        positive.append("有转正信号")
+    elif conversion == "none":
+        cautions.append("明确无转正")
+
+    if visa == "possible":
+        positive.append("有工签可能")
+    elif visa == "unlikely":
+        cautions.append("工签风险较高")
+
+    if language == "chinese_friendly_possible":
+        positive.append("中文友好可能")
+
+    freshness = job.get("listing_freshness_status") or ""
+    if freshness == "likely_closed":
+        cautions.insert(0, "岗位可能已下架")
+    elif freshness in {"verify", "unknown"}:
+        cautions.append("招聘状态需确认")
+    if direction_mismatch:
+        cautions.insert(0, "方向匹配较弱")
+    muted = job.get("user_tag_mutes") or []
+    if muted:
+        labels = "、".join(clean_text(item.get("label") or item.get("id") or "") for item in muted[:2])
+        if labels:
+            cautions.insert(0, f"命中少看项 {labels}")
+    if job.get("employment_type") == "Internship" and conversion not in {"strong", "possible", "none"}:
+        cautions.append("转正需确认")
+    if visa not in {"possible", "unlikely"}:
+        cautions.append("工签需确认")
+
+    segments = [lead]
+    if positive:
+        segments.append("、".join(positive[:2]))
+    if cautions:
+        segments.append("、".join(list(dict.fromkeys(cautions))[:2]))
+    summary = "；".join(segments) + "。"
+    if len(summary) <= 72:
+        return summary
+    return summary[:71].rstrip("，；、。 ") + "。"
+
+
 def job_tag_label(tag_id: str) -> str:
     return USER_JOB_TAG_LABELS.get(tag_id, tag_id)
 
@@ -9616,6 +9680,7 @@ def rank_job_with_preferences(
         risk_reasons.append(out.get("listing_freshness_label") or "需确认有效")
     ordered_reasons = list(dict.fromkeys([*risk_reasons, *out["fit_reasons"]]))
     out["recommendation_reason"] = " · ".join(ordered_reasons[:4]) or "按基础评分推荐，建议打开 JD 确认转正和工签信息。"
+    out["decision_summary"] = job_decision_summary(out)
     return out
 
 
@@ -9669,7 +9734,7 @@ WORKBENCH_JOB_FIELDS = {
     "fit_score", "rank_score", "base_score", "score", "pathway_score", "pathway_tags",
     "user_tag_matches", "user_tag_mutes",
     "salary_fit", "salary_fit_label", "salary_min", "salary_max", "salary_currency", "salary_period",
-    "recommendation_reason", "match_notes", "source_count", "supplemental_candidate",
+    "decision_summary", "recommendation_reason", "source_count", "supplemental_candidate",
     "company_watched_by_user", "company_hidden_by_watchlist", "next_step",
     "conversion_signal", "visa_sponsorship_signal", "language_signal",
     "listing_freshness_status", "listing_freshness_label",

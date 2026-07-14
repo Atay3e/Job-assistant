@@ -1153,7 +1153,7 @@ function compactJobRow(job, options = {}) {
   const freshness = freshnessInfo(job);
   const reason = options.queue
     ? (job.next_step || trackerNextStep(job))
-    : (job.recommendation_reason || job.next_step || job.match_notes || "打开详情确认转正、工签和岗位要求。");
+    : (job.decision_summary || job.recommendation_reason || job.next_step || job.match_notes || "打开详情确认转正、工签和岗位要求。");
   const isQueue = job.status === "Apply Queue";
   const isApplied = job.status === "Applied";
   const tagLimit = options.mini ? 3 : 5;
@@ -1187,7 +1187,7 @@ function compactJobRow(job, options = {}) {
       </div>
       <div class="inbox-score">
         <strong>${score.toFixed(1)}</strong>
-        <span>匹配</span>
+        <span>综合</span>
       </div>
       <div class="inbox-actions">${primaryAction}${secondaryAction}</div>
     </article>
@@ -1303,9 +1303,7 @@ function renderWorkbench() {
   if (todayViewActive) {
     const highCount = todayJobs.length;
     const scanText = scan.status ? (SCAN_STATUS_ZH[scan.status] || scan.status) : "待命";
-    const discoveredCount = Number(discovery.today_discovered ?? highCount);
-    const staleText = staleApplicationCount ? ` · ${staleApplicationCount} 个长期无回复` : "";
-    setTopbar("今天要做什么", `${discoveredCount} 个今日入库 · ${highCount} 个可投推荐 · ${weeklyJobs.length} 个近一周未投 · ${followupCount} 个需要跟进${staleText} · 扫描${scanText}`);
+    setTopbar("今天要做什么", `${highCount} 个优先机会 · ${Number(summary.apply_queue || 0)} 个待投 · ${followupCount} 个需跟进 · 扫描${scanText}`);
   }
 
   const actionList = document.getElementById("todayActionList");
@@ -2924,11 +2922,15 @@ function detailTemplate(job, cnText) {
       ${alternateLinks ? `<div class="alternate-source-links"><span class="small-text">同一岗位的其它入口</span>${alternateLinks}</div>` : ""}
     </div>
     <div class="detail-block">
-      <h3>留新路径判断</h3>
-      <p>${escapeHtml(job.recommendation_reason || "请打开原始 JD 确认转正、工签和语言要求。")}</p>
+      <h3>一句判断</h3>
+      <p>${escapeHtml(job.decision_summary || job.recommendation_reason || "请打开原始 JD 确认转正、工签和语言要求。")}</p>
       ${pathwayEvidence ? `<ul class="evidence-mini-list">${pathwayEvidence}</ul>` : ""}
       ${pathwayQuestions ? `<div class="pathway-question-box"><h4>投递前建议确认</h4><ul>${pathwayQuestions}</ul></div>` : ""}
     </div>
+    <details class="detail-block detail-disclosure">
+      <summary><strong>完整推荐依据</strong><span>查看算法命中的方向、标签与风险</span></summary>
+      <p>${escapeHtml(job.recommendation_reason || "暂无完整推荐依据。")}</p>
+    </details>
     <div class="detail-block">
       <h3>匹配说明</h3>
       <p>${escapeHtml(job.match_notes || "暂无匹配说明。")}</p>
