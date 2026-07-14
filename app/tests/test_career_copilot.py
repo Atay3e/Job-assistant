@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import gzip
 import io
 import json
 import os
@@ -8,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import webbrowser
@@ -296,19 +298,125 @@ class ParserTests(unittest.TestCase):
     def fixture(self, name: str) -> str:
         return (FIXTURES / name).read_text(encoding="utf-8")
 
+    def test_json_response_compresses_large_payloads_for_supported_clients(self):
+        class Handler:
+            headers = {"Accept-Encoding": "gzip, deflate"}
+
+            def __init__(self):
+                self.response_headers = {}
+                self.wfile = io.BytesIO()
+
+            def send_response(self, status):
+                self.status = status
+
+            def send_header(self, name, value):
+                self.response_headers[name] = value
+
+            def end_headers(self):
+                pass
+
+        handler = Handler()
+        payload = {"jobs": [{"name": "Product Intern", "company": "Example"}] * 100}
+        server.json_response(handler, payload)
+
+        self.assertEqual(handler.response_headers["Content-Encoding"], "gzip")
+        self.assertEqual(json.loads(gzip.decompress(handler.wfile.getvalue())), payload)
+        self.assertEqual(int(handler.response_headers["Content-Length"]), len(handler.wfile.getvalue()))
+
+    def test_keyword_matching_preserves_word_boundaries(self):
+        self.assertTrue(server.has_keyword("ai-driven product work", "ai"))
+        self.assertTrue(server.has_keyword("use ai for research", "ai"))
+        self.assertFalse(server.has_keyword("paid internship", "ai"))
+        self.assertFalse(server.has_keyword("ai_research", "ai"))
+        self.assertTrue(server.has_keyword("研究 ai 产品", "ai"))
+
     def test_parse_linkedin_fixture(self):
         jobs = server.parse_linkedin_jobs_from_html(self.fixture("linkedin.html"), "product design intern", 5)
         self.assertEqual(jobs[0]["external_job_id"], "4411111111")
         self.assertEqual(server.canonical_job_url("LinkedIn", jobs[0]["url"], jobs[0]["external_job_id"]), "https://www.linkedin.com/jobs/view/4411111111")
+
+    def test_parse_linkedin_public_detail_extracts_job_description(self):
+        html = """
+        <section>
+          <div class="show-more-less-html__markup show-more-less-html__markup--clamp-after-5">
+            <strong>About the role</strong><br>
+            Join our Singapore product internship and work directly with founders.
+            Potential for full-time employment after your internship, with a monthly stipend.
+            You will conduct user research, prototype in Figma, and evaluate AI workflows.
+          </div>
+        </section>
+        """
+
+        detail = server.parse_linkedin_public_detail_html(html)
+
+        self.assertIn("Potential for full-time employment", detail)
+        self.assertIn("user research", detail)
 
     def test_parse_internsg_fixture(self):
         jobs = server.parse_internsg_jobs_from_html(self.fixture("internsg.html"), "product design intern", 5)
         self.assertEqual(jobs[0]["source"], "InternSG")
         self.assertIn("Product Design", jobs[0]["position"])
 
+    def test_parse_internsg_removes_featured_label_from_company(self):
+        html = """
+        <div class="ast-row list-featured">
+          <div class="ast-col-lg-3">Orfeostory Pte Ltd Featured</div>
+          <div class="ast-col-lg-3"><a href="https://www.internsg.com/job/orfeostory-product-intern/">Product Intern</a></div>
+          <div class="ast-col-lg-3">Singapore</div>
+          <div class="ast-col-lg-3">Internship</div>
+        </div>
+        """
+
+        jobs = server.parse_internsg_jobs_from_html(html, "product intern", 5)
+
+        self.assertEqual(jobs[0]["company"], "Orfeostory Pte Ltd")
+
     def test_parse_indeed_fixture(self):
         jobs = server.parse_indeed_jobs_from_html(self.fixture("indeed.html"), "ux research intern", 5)
         self.assertEqual(jobs[0]["url"], "https://sg.indeed.com/viewjob?jk=abc123def456")
+        self.assertEqual(jobs[0]["company"], "Research Co")
+
+    def test_parse_indeed_prefers_real_rc_job_key(self):
+        html = """
+        <div class="job_seen_beacon">
+          <a data-jk="78ff7ee6054aa274" href="/rc/clk?jk=78ff7ee6054aa274">
+            <span title="Engagement and UX Intern">Engagement and UX Intern</span>
+          </a>
+          <span data-testid="company-name">NLB National Library Board</span>
+          <div data-testid="text-location">Hybrid work in Singapore</div>
+        </div>
+        <a data-jk="789abcdef0123456" href="/viewjob?jk=789abcdef0123456">
+          <span title="Engagement and UX Intern">Engagement and UX Intern</span>
+        </a>
+        """
+
+        jobs = server.parse_indeed_jobs_from_html(html, "ux research intern", 5)
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["url"], "https://sg.indeed.com/viewjob?jk=78ff7ee6054aa274")
+        self.assertEqual(jobs[0]["external_job_id"], "78ff7ee6054aa274")
+
+    def test_parse_serpapi_indeed_apply_option(self):
+        payload = {
+            "jobs_results": [
+                {
+                    "title": "UX Research Intern",
+                    "company_name": "Research Co",
+                    "location": "Singapore",
+                    "description": "Support usability testing and product research.",
+                    "detected_extensions": {"schedule_type": "Internship"},
+                    "apply_options": [
+                        {"title": "Apply on Indeed", "link": "https://sg.indeed.com/viewjob?jk=serp123"},
+                        {"title": "Apply on Company Site", "link": "https://example.com/jobs/serp123"},
+                    ],
+                }
+            ]
+        }
+
+        jobs = server.parse_serpapi_indeed_jobs(payload, "ux research intern", 5, "SG")
+
+        self.assertEqual(jobs[0]["source"], "Indeed")
+        self.assertEqual(jobs[0]["url"], "https://sg.indeed.com/viewjob?jk=serp123")
         self.assertEqual(jobs[0]["company"], "Research Co")
 
     def test_parse_jobstreet_fixture(self):
@@ -316,6 +424,673 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(jobs[0]["source"], "JobStreet")
         self.assertEqual(jobs[0]["url"], "https://sg.jobstreet.com/job/98765432")
         self.assertIn("UI/UX", jobs[0]["position"])
+
+    def test_parse_jobstreet_api_payload(self):
+        payload = {
+            "data": [
+                {
+                    "id": "92606186",
+                    "title": "AI Intern",
+                    "companyName": "Skite Social",
+                    "locations": [{"label": "Central Region"}],
+                    "workTypes": ["Full time"],
+                    "salaryLabel": "SGD 1,200 - 1,800 per month",
+                    "teaser": "Hands-on exposure to AI in real business operations.",
+                    "classifications": [
+                        {
+                            "classification": {"description": "Information & Communication Technology"},
+                            "subclassification": {"description": "Engineering - Software"},
+                        }
+                    ],
+                }
+            ]
+        }
+
+        jobs = server.parse_jobstreet_api_jobs(payload, "ai internship", 5)
+
+        self.assertEqual(jobs[0]["source"], "JobStreet")
+        self.assertEqual(jobs[0]["url"], "https://sg.jobstreet.com/job/92606186")
+        self.assertEqual(jobs[0]["company"], "Skite Social")
+        self.assertIn("SGD 1,200", jobs[0]["jd_text"])
+
+    def test_jobstreet_api_parser_drops_missing_or_placeholder_companies(self):
+        payload = {
+            "data": [
+                {"id": "1", "title": "Product Intern", "companyName": ""},
+                {"id": "2", "title": "Business Development Associate", "companyName": "Business Development Associate"},
+                {"id": "3", "title": "AI Product Intern", "companyName": "Real Startup"},
+            ]
+        }
+
+        jobs = server.parse_jobstreet_api_jobs(payload, "startup intern", 10)
+
+        self.assertEqual([job["company"] for job in jobs], ["Real Startup"])
+
+    def test_startup_opportunity_source_uses_stable_public_results_and_keeps_entry_roles(self):
+        public_jobs = [
+            {"company": "SGInnovate", "position": "Intern, Startup Innovation", "source": "JobStreet", "url": "https://sg.jobstreet.com/job/1", "job_type": "Internship", "jd_text": "Singapore startup internship."},
+            {"company": "Scale AI Co", "position": "Senior Sales Director", "source": "JobStreet", "url": "https://sg.jobstreet.com/job/2", "job_type": "Full time", "jd_text": "Singapore senior sales role."},
+            {"company": "Architecture Group", "position": "Architecture Intern", "source": "JobStreet", "url": "https://sg.jobstreet.com/job/3", "job_type": "Internship", "jd_text": "Returned by a startup search but unrelated."},
+        ]
+        with mock.patch.object(server, "fetch_jobstreet_jobs", return_value=(public_jobs, [])) as fetch:
+            jobs, failures = server.fetch_sg_startup_channel_jobs(10, "SG")
+
+        self.assertEqual(failures, [])
+        self.assertEqual([job["company"] for job in jobs], ["SGInnovate"])
+        self.assertEqual(jobs[0]["source"], "JobStreet · 创业/AI")
+        self.assertFalse(fetch.call_args.kwargs["use_html_fallback"])
+
+    def test_ai_startup_ats_source_keeps_entry_roles_and_spreads_companies(self):
+        def ats_fixture(url, company, _focus, _region, _city, _limit):
+            if company == "Simular":
+                return [], ["Simular ATS limited"]
+            return [
+                {
+                    "company": company,
+                    "position": f"{company} Product Intern",
+                    "source": "Company Site / ATS",
+                    "url": f"{url}/intern",
+                    "location": "Singapore",
+                    "job_type": "Internship",
+                    "jd_text": "Singapore product internship with AI and user research.",
+                },
+                {
+                    "company": company,
+                    "position": "Senior AI Engineer",
+                    "source": "Company Site / ATS",
+                    "url": f"{url}/senior",
+                    "location": "Singapore",
+                    "job_type": "Full-time",
+                    "jd_text": "Singapore senior engineering role requiring eight years of experience.",
+                },
+                {
+                    "company": company,
+                    "position": "Product Operations Intern",
+                    "source": "Company Site / ATS",
+                    "url": f"{url}/us-intern",
+                    "location": "Palo Alto",
+                    "job_type": "Internship",
+                    "jd_text": "Product operations internship in Palo Alto.",
+                },
+            ], []
+
+        with mock.patch.object(server, "fetch_company_ats_jobs", side_effect=ats_fixture):
+            jobs, failures = server.fetch_sg_ai_startup_ats_jobs(3, "SG")
+
+        self.assertEqual(len(jobs), 3)
+        self.assertEqual(len({job["company"] for job in jobs}), 3)
+        self.assertTrue(all(job["employment_type"] == "Internship" for job in jobs))
+        self.assertTrue(all(job["source"] == "ATS · 科技初创" for job in jobs))
+        self.assertTrue(any("Simular ATS limited" in failure for failure in failures))
+
+    def test_ai_startup_ats_source_is_registered_as_primary(self):
+        self.assertIn("新加坡科技与 AI ATS", server.expected_scan_sources("SG"))
+        self.assertEqual(server.scan_source_mode("新加坡科技与 AI ATS"), "primary")
+        self.assertEqual(server.SOURCE_LIMITS["AI Startup ATS"], 52)
+
+    def test_sg_tech_ats_includes_verified_product_and_startup_boards(self):
+        boards = {company: url for company, url, _focus in server.SG_AI_STARTUP_ATS_BOARDS}
+
+        self.assertEqual(boards["Workato"], "https://job-boards.greenhouse.io/workato")
+        self.assertEqual(boards["k-ID"], "https://jobs.ashbyhq.com/k-ID")
+        self.assertEqual(boards["Motion Ventures"], "https://job-boards.greenhouse.io/motionventures")
+        self.assertEqual(boards["ShopBack"], "https://jobs.lever.co/shopback-2")
+        self.assertEqual(boards["Carousell Group"], "https://careers.smartrecruiters.com/carousellgroup")
+        self.assertEqual(boards["YouTrip"], "https://apply.workable.com/youtrip")
+        self.assertEqual(boards["StraitsX"], "https://job-boards.greenhouse.io/straitsx")
+        self.assertEqual(boards["MoneySmart"], "https://job-boards.greenhouse.io/moneysmart")
+        self.assertEqual(boards["Razer"], "https://razer.wd3.myworkdayjobs.com/Careers")
+        self.assertEqual(boards["Circles"], "https://circles.wd103.myworkdayjobs.com/en-US/Circles")
+        self.assertEqual(boards["Wise"], "https://careers.smartrecruiters.com/Wise")
+
+    def test_sg_tech_ats_scans_beyond_first_eight_roles_before_filtering(self):
+        requested_limits = []
+
+        def ats_fixture(url, company, focus, region, city, limit):
+            requested_limits.append(limit)
+            jobs = [
+                {
+                    "company": company,
+                    "position": f"Senior Platform Engineer {index}",
+                    "source": "Company Site / ATS",
+                    "url": f"{url}/senior-{index}",
+                    "location": "Singapore",
+                    "job_type": "Full-time",
+                    "jd_text": "Senior full-time engineering role.",
+                }
+                for index in range(12)
+            ]
+            jobs.append(
+                {
+                    "company": company,
+                    "position": "Product Research Intern",
+                    "source": "Company Site / ATS",
+                    "url": f"{url}/product-research-intern",
+                    "location": "Singapore",
+                    "job_type": "Internship",
+                    "jd_text": "Singapore product research internship.",
+                }
+            )
+            jobs.append(
+                {
+                    "company": company,
+                    "position": "Frontend Engineer",
+                    "source": "Company Site / ATS",
+                    "url": f"{url}/frontend-engineer",
+                    "location": "Singapore",
+                    "job_type": "Company career page",
+                    "jd_text": "Build production web experiences. Recent graduate or 1-3 years of experience.",
+                }
+            )
+            return jobs[:limit], []
+
+        with mock.patch.object(server, "SG_AI_STARTUP_ATS_BOARDS", [("Deep Board", "https://jobs.ashbyhq.com/deep", "Product")]):
+            with mock.patch.object(server, "fetch_company_ats_jobs", side_effect=ats_fixture):
+                jobs, failures = server.fetch_sg_ai_startup_ats_jobs(4, "SG")
+
+        self.assertFalse(failures)
+        self.assertGreaterEqual(requested_limits[0], 40)
+        self.assertEqual([job["position"] for job in jobs], ["Product Research Intern"])
+
+    def test_cultjobs_parsers_keep_current_singapore_internships(self):
+        listing = """
+        <article class="job_listing_type-internship job_listing_location-singapore"><h2 class="job-title"><a href="https://cultjobs.com/job/product-uiux-intern/">Product UIUX Intern</a></h2></article>
+        <article class="job_listing_type-full-time job_listing_location-singapore"><h2 class="job-title"><a href="https://cultjobs.com/job/designer/">Designer</a></h2></article>
+        <article class="job_listing_type-internship job_listing_location-others"><h2 class="job-title"><a href="https://cultjobs.com/job/remote-intern/">Remote Intern</a></h2></article>
+        """
+        detail = """
+        <h1 class="job-detail-title">Product UIUX Intern</h1>
+        <div class="job-metas-detail"><a href="https://cultjobs.com/employer/techzu/">Techzu</a><div class="job-location">Singapore</div><div class="job-salary">$800 - $1000 / month</div></div>
+        <div class="job-metas-detail-bottom"><a class="type-job">Internship</a></div>
+        <div class="job-detail-description">Design product flows, run usability tests, and support AI products. Potential opportunity for full-time conversion.</div>
+        <div class="job-detail-detail"><li><div class="text">Expiration date</div><div class="value">August 12, 2099</div></li></div>
+        """
+
+        urls = server.parse_cultjobs_listing_urls(listing, 10)
+        job = server.parse_cultjobs_detail(detail, urls[0])
+
+        self.assertEqual(urls, ["https://cultjobs.com/job/product-uiux-intern/"])
+        self.assertEqual(job["company"], "Techzu")
+        self.assertEqual(job["source"], "Cultjobs")
+        self.assertIn("full-time conversion", job["jd_text"])
+        self.assertEqual(job["salary_min"], 800)
+        self.assertEqual(job["salary_max"], 1000)
+        self.assertEqual(job["salary_text"], "$800 - $1000 / month")
+
+    def test_cultjobs_detail_drops_expired_jobs(self):
+        detail = """
+        <h1 class="job-detail-title">Expired UX Intern</h1>
+        <div class="job-metas-detail"><a href="https://cultjobs.com/employer/old-co/">Old Co</a><div class="job-location">Singapore</div></div>
+        <div class="job-detail-description">UX internship.</div>
+        <div class="job-detail-detail"><li><div class="text">Expiration date</div><div class="value">January 1, 2020</div></li></div>
+        """
+        self.assertIsNone(server.parse_cultjobs_detail(detail, "https://cultjobs.com/job/expired/"))
+
+    def test_cultjobs_detail_drops_non_role_titles(self):
+        detail = """
+        <h1 class="job-detail-title">Music Games Develop Musical Perception Skills</h1>
+        <div class="job-metas-detail"><a href="https://cultjobs.com/employer/course-co/">Course Co</a><div class="job-location">Singapore</div></div>
+        <div class="job-metas-detail-bottom"><a class="type-job">Internship</a></div>
+        <div class="job-detail-description">An educational programme description.</div>
+        """
+        self.assertIsNone(server.parse_cultjobs_detail(detail, "https://cultjobs.com/job/music-games/"))
+
+    def test_company_career_link_extraction_rejects_css_assets_and_cleans_escaped_urls(self):
+        html = """
+        <style>background:url(https://example.com/frontier-career.jpg);background-size:cover</style>
+        <link href="https://example.com/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fexample.com%2Fcareers%2F">
+        <script>const careers = "https:\\/\\/careers.smartrecruiters.com\\/company\\/openings\\\\";</script>
+        <a href="https://careers.smartrecruiters.com/company/openings">View openings</a>
+        """
+
+        links = server.extract_embedded_ats_links(html, "https://example.com/careers/")
+
+        self.assertNotIn("https://example.com/frontier-career.jpg", links)
+        self.assertFalse(any("/wp-json/" in link for link in links))
+        self.assertIn("https://careers.smartrecruiters.com/company/openings", links)
+        self.assertFalse(any("\\" in link for link in links))
+
+    def test_jobstreet_distributes_results_across_queries(self):
+        def fake_parse(_payload, query, _limit):
+            return [
+                {
+                    "company": f"{query} Company {index}",
+                    "position": "Product Intern",
+                    "source": "JobStreet",
+                    "url": f"https://sg.jobstreet.com/job/{query}-{index}",
+                    "location": "Singapore",
+                    "jd_text": "Singapore product internship.",
+                }
+                for index in range(10)
+            ]
+
+        with mock.patch.object(server, "http_get", return_value="{}"):
+            with mock.patch.object(server, "parse_jobstreet_api_jobs", side_effect=fake_parse):
+                with mock.patch.object(server, "jobstreet_search_urls", return_value=[]):
+                    jobs, failures = server.fetch_jobstreet_jobs(6, ["MUJI", "POP MART"], "SG")
+
+        self.assertEqual(failures, [])
+        self.assertEqual(sum(job["company"].startswith("MUJI") for job in jobs), 3)
+        self.assertEqual(sum(job["company"].startswith("POP MART") for job in jobs), 3)
+
+    def test_watched_company_public_source_filters_unrelated_results(self):
+        companies = [
+            {"company": "MUJI Singapore", "aliases": ["MUJI"]},
+            {"company": "POP MART Singapore", "aliases": ["POP MART"]},
+        ]
+        jobs = [
+            {"company": "Muji", "position": "Retail Assistant", "source": "JobStreet", "url": "https://sg.jobstreet.com/job/1"},
+            {"company": "Pop Mart (Singapore) Holding Pte Ltd", "position": "Sales Associate", "source": "JobStreet", "url": "https://sg.jobstreet.com/job/2"},
+            {"company": "Other Retailer", "position": "Retail Assistant", "source": "JobStreet", "url": "https://sg.jobstreet.com/job/3"},
+        ]
+        with mock.patch.object(server, "watched_company_scan_items", return_value=companies):
+            with mock.patch.object(server, "fetch_jobstreet_jobs", return_value=(jobs, [])):
+                matched, failures = server.fetch_watched_company_public_jobs(10, "SG")
+
+        self.assertEqual(failures, [])
+        self.assertEqual([job["company"] for job in matched], ["Muji", "Pop Mart (Singapore) Holding Pte Ltd"])
+
+    def test_watched_company_public_source_round_robins_companies(self):
+        companies = [
+            {"company": "Large Co", "aliases": ["Large Co"]},
+            {"company": "Small Co", "aliases": ["Small Co"]},
+        ]
+        jobs = [
+            {"company": "Large Co", "position": f"Role {index}", "source": "JobStreet", "url": f"https://example.com/large-{index}"}
+            for index in range(5)
+        ] + [
+            {"company": "Small Co", "position": "Only Role", "source": "JobStreet", "url": "https://example.com/small"}
+        ]
+        with mock.patch.object(server, "watched_company_scan_items", return_value=companies):
+            with mock.patch.object(server, "fetch_jobstreet_jobs", return_value=(jobs, [])):
+                matched, _failures = server.fetch_watched_company_public_jobs(3, "SG")
+
+        self.assertEqual([job["company"] for job in matched], ["Large Co", "Small Co", "Large Co"])
+
+    def test_public_job_link_classifier_rejects_navigation_and_wrong_location(self):
+        self.assertEqual(
+            server.classify_public_job_link(
+                "https://glints.com/sg/opportunities/jobs/product-design-intern/abc123",
+                "Product Design Intern",
+                "Acme Studio Product Design Intern Singapore",
+                "SG",
+            ),
+            "Glints",
+        )
+        self.assertEqual(
+            server.classify_public_job_link(
+                "https://www.nodeflair.com/jobs/acme-product-designer-123456",
+                "Product Designer",
+                "Acme Product Designer Singapore",
+                "SG",
+            ),
+            "NodeFlair",
+        )
+        self.assertEqual(
+            server.classify_public_job_link(
+                "https://wellfound.com/jobs/4417538-product-designer",
+                "Product Designer",
+                "Acme AI Product Designer Singapore",
+                "SG",
+            ),
+            "Wellfound",
+        )
+        self.assertIsNone(
+            server.classify_public_job_link(
+                "https://wellfound.com/role/l/product-manager/united-states",
+                "View all product jobs",
+                "Product jobs in the United States",
+                "SG",
+            )
+        )
+        self.assertIsNone(
+            server.classify_public_job_link(
+                "https://wellfound.com/jobs/4417538-product-designer",
+                "Product Designer",
+                "Acme AI Product Designer United States",
+                "SG",
+            )
+        )
+
+    def test_public_search_parser_keeps_real_job_cards_and_company(self):
+        html = """
+        <main>
+          <a href="https://wellfound.com/role/l/designer/united-states">View all design jobs</a>
+          <article>
+            <a href="https://wellfound.com/jobs/4417538-product-designer">Product Designer</a>
+            <span data-company-name>Acme AI</span>
+            <span>Singapore</span>
+          </article>
+          <article>
+            <a href="https://wellfound.com/jobs/4363739-senior-product-designer">Senior Product Designer</a>
+            <span data-company-name>US Design Co</span>
+            <span>United States</span>
+          </article>
+        </main>
+        """
+
+        jobs = server.parse_public_search_jobs_from_html(
+            html,
+            "https://wellfound.com/jobs?keywords=product&locations=Singapore",
+            "Glints / NodeFlair / Startups",
+            "SG",
+            "Singapore",
+            10,
+        )
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["company"], "Acme AI")
+        self.assertEqual(jobs[0]["source"], "Wellfound")
+        self.assertEqual(jobs[0]["position"], "Product Designer")
+
+    def test_careers_gov_algolia_parser_keeps_official_internships(self):
+        payload = {
+            "hits": [
+                {
+                    "objectID": "HRP:17828658/005056a3-d347-1fe1-9fe7-48a69483a2ad",
+                    "jobSource": "HRP",
+                    "title": "Intern (Digital Capabilities), Registries Operations & Systems",
+                    "description": "Evaluate AI opportunities and improve the user experience of public systems.",
+                    "employmentType": "Internship",
+                    "agency": "Intellectual Property Office of Singapore",
+                    "department": "InfoComm, Technology, New Media Communications",
+                    "activityTimestamp": 1783987200000,
+                },
+                {
+                    "objectID": "HRP:123/ignored",
+                    "jobSource": "HRP",
+                    "title": "Senior Finance Director",
+                    "description": "Lead finance.",
+                    "employmentType": "Permanent",
+                    "agency": "Example Agency",
+                },
+            ]
+        }
+
+        jobs = server.parse_careers_gov_algolia_jobs(payload, "product intern", 10)
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["source"], "Careers@Gov")
+        self.assertEqual(jobs[0]["company"], "Intellectual Property Office of Singapore")
+        self.assertEqual(jobs[0]["employment_type"], "Internship")
+        self.assertEqual(
+            jobs[0]["url"],
+            "https://jobs.careers.gov.sg/jobs/hrp/17828658/005056a3-d347-1fe1-9fe7-48a69483a2ad",
+        )
+
+    def test_careers_gov_detail_parser_keeps_requirements_and_closing_date(self):
+        html = """
+        <html><body>
+          <nav>A Singapore Government Agency Website Search Save</nav>
+          <h1>Product Experience Intern</h1>
+          <div><span>Internship</span><span>Closing on 30 Aug 2026</span></div>
+          <section><h2>What the role is</h2><p>Improve a public-facing digital service.</p></section>
+          <section><h2>What you will be working on</h2><p>Run user research and create Figma prototypes.</p></section>
+          <section><h2>What we are looking for</h2><p>Open to students. Singapore Citizen only.</p></section>
+          <section><h2>About your application process</h2><p>This job is closing on 30 Aug 2026.</p></section>
+          <footer>Browse all jobs Privacy</footer>
+        </body></html>
+        """
+        listing = {
+            "company": "Example Agency",
+            "position": "Product Experience Intern",
+            "source": "Careers@Gov",
+            "url": "https://jobs.careers.gov.sg/jobs/hrp/123/example",
+            "jd_text": "Short summary.",
+        }
+
+        parsed = server.parse_careers_gov_detail_html(html, listing)
+
+        self.assertIn("Run user research", parsed["jd_text"])
+        self.assertIn("Singapore Citizen only", parsed["jd_text"])
+        self.assertIn("Closing date: 30 Aug 2026", parsed["jd_text"])
+        self.assertNotIn("Browse all jobs", parsed["jd_text"])
+        _score, flags, _notes = server.score_job("Example Agency", parsed["position"], parsed["jd_text"], parsed["source"])
+        self.assertIn("citizen_or_pr_only", flags)
+
+    def test_careers_gov_fetch_round_robins_queries_and_enriches_details(self):
+        def search_fixture(query, _limit):
+            suffix = query.replace(" ", "-")
+            return [
+                {
+                    "company": f"{query} Agency",
+                    "position": f"{query.title()} Role",
+                    "source": "Careers@Gov",
+                    "url": f"https://jobs.careers.gov.sg/jobs/hrp/{suffix}/uuid",
+                    "external_job_id": f"{suffix}/uuid",
+                    "location": "Singapore",
+                    "region": "SG",
+                    "city": "Singapore",
+                    "source_region": "SG",
+                    "job_type": "Internship",
+                    "employment_type": "Internship",
+                    "jd_text": f"{query} public service internship.",
+                }
+            ]
+
+        with mock.patch.object(server, "search_careers_gov_jobs", side_effect=search_fixture):
+            with mock.patch.object(
+                server,
+                "http_get",
+                return_value="<h1>Intern</h1><section><h2>What the role is</h2><p>Full detail.</p></section>",
+            ):
+                jobs, failures = server.fetch_careers_gov_jobs(4, "SG")
+
+        self.assertFalse(failures)
+        self.assertEqual(len(jobs), 4)
+        self.assertEqual(len({job["company"] for job in jobs}), 4)
+        self.assertTrue(all("Full detail" in job["jd_text"] for job in jobs))
+
+    def test_internsg_detail_parser_excludes_site_navigation(self):
+        html = """
+        <nav>Main Menu Community Marketing Articles</nav>
+        <div class="isg-detail-container ast-row no-gutters">
+          <div class="ast-row detail-even">
+            <div class="ast-col-md-2 font-weight-bold">Job Description</div>
+            <div class="ast-col-md-10">Support supply chain systems and write software tooling.</div>
+          </div>
+        </div>
+        <footer>Advertise with InternSG</footer>
+        """
+
+        detail = server.parse_internsg_detail_text(html)
+
+        self.assertIn("Support supply chain systems", detail)
+        self.assertNotIn("Main Menu", detail)
+        self.assertNotIn("Community Marketing", detail)
+
+    def test_job_matching_text_removes_source_boilerplate(self):
+        internsg = server.job_matching_text(
+            {
+                "company": "Aerospace Co",
+                "position": "Parts Support Intern",
+                "source": "InternSG",
+                "jd_text": "Main Menu Marketing Community About Us Job Description Technical parts and SAP support. Share this page Related Posts Healthcare marketing roles.",
+            }
+        )
+        linkedin = server.job_matching_text(
+            {
+                "company": "Luxury Co",
+                "position": "Supply Chain Intern",
+                "source": "LinkedIn",
+                "jd_text": "Use AI to assess how you fit Get AI-powered advice. Sign in. Position Manage inventory and logistics.",
+            }
+        )
+
+        self.assertNotIn("marketing community", internsg.lower())
+        self.assertIn("technical parts", internsg.lower())
+        self.assertNotIn("healthcare marketing", internsg.lower())
+        self.assertNotIn("ai-powered advice", linkedin.lower())
+        self.assertIn("manage inventory", linkedin.lower())
+
+    def test_public_search_circuit_breaks_per_host_without_blocking_other_hosts(self):
+        calls = []
+
+        def fake_http_get(url, **_kwargs):
+            calls.append(url)
+            if "glints.com" in url or "nodeflair.com" in url:
+                raise RuntimeError("HTTP Error 403: Forbidden")
+            return "<main></main>"
+
+        with mock.patch.object(server, "region_queries", return_value=["one", "two", "three", "four"]):
+            with mock.patch.object(server, "http_get", side_effect=fake_http_get):
+                jobs, failures = server.generic_public_search_jobs(
+                    "Glints / NodeFlair / Startups",
+                    [
+                        "https://glints.com/sg/opportunities/jobs/explore?keyword={query}",
+                        "https://www.nodeflair.com/sg/jobs?query={query}",
+                        "https://wellfound.com/jobs?keywords={query}&locations=Singapore",
+                    ],
+                    10,
+                    "SG",
+                )
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(sum("glints.com" in url for url in calls), 2)
+        self.assertEqual(sum("nodeflair.com" in url for url in calls), 2)
+        self.assertEqual(sum("wellfound.com" in url for url in calls), 4)
+        self.assertEqual(len(failures), 4)
+
+    def test_public_search_marks_a_functionally_unavailable_page_as_limited(self):
+        unavailable_html = "<main>We're temporarily unable to search for jobs. Please try again later.</main>"
+        with mock.patch.object(server, "region_queries", return_value=["one", "two", "three"]):
+            with mock.patch.object(server, "http_get", return_value=unavailable_html) as get:
+                jobs, failures = server.generic_public_search_jobs(
+                    "MyCareersFuture",
+                    ["https://www.mycareersfuture.gov.sg/search?search={query}"],
+                    10,
+                    "SG",
+                )
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(server.has_limited_failure(failures))
+
+    def test_mycareersfuture_api_parser_keeps_open_local_internships(self):
+        payload = {
+            "results": [
+                {
+                    "uuid": "sg-intern-1",
+                    "title": "Product Design Intern",
+                    "description": "<p>Design product flows and run user research.</p>",
+                    "status": {"id": "102", "jobStatus": "Open"},
+                    "minimumYearsExperience": 0,
+                    "employmentTypes": [{"employmentType": "Internship/Attachment"}],
+                    "positionLevels": [{"position": "Fresh/entry level"}],
+                    "postedCompany": {"name": "EXAMPLE PTE. LTD."},
+                    "address": {"isOverseas": False, "districts": [{"location": "D01 Marina"}]},
+                    "salary": {"minimum": 1200, "maximum": 1800, "type": {"salaryType": "Monthly"}},
+                    "skills": [{"skill": "Figma"}, {"skill": "User Research"}],
+                    "metadata": {
+                        "newPostingDate": "2099-07-14",
+                        "expiryDate": "2099-08-13",
+                        "jobDetailsUrl": "https://www.mycareersfuture.gov.sg/job/design/product-design-intern-sg-intern-1",
+                    },
+                },
+                {
+                    "uuid": "overseas-1",
+                    "title": "Marketing Intern",
+                    "description": "Overseas internship.",
+                    "status": "Open",
+                    "employmentTypes": [{"employmentType": "Internship/Attachment"}],
+                    "postedCompany": {"name": "OVERSEAS CO"},
+                    "address": {"isOverseas": True, "overseasCountry": "Australia"},
+                    "metadata": {"expiryDate": "2099-08-13"},
+                },
+            ]
+        }
+
+        jobs = server.parse_mycareersfuture_api_jobs(payload, 10)
+
+        self.assertEqual([job["position"] for job in jobs], ["Product Design Intern"])
+        self.assertEqual(jobs[0]["company"], "EXAMPLE PTE. LTD.")
+        self.assertEqual(jobs[0]["source"], "MyCareersFuture")
+        self.assertEqual(jobs[0]["location"], "Singapore · D01 Marina")
+        self.assertIn("SGD 1200 - 1800 Monthly", jobs[0]["jd_text"])
+        self.assertIn("Figma", jobs[0]["jd_text"])
+
+    def test_mycareersfuture_fetch_uses_public_api_and_deduplicates_queries(self):
+        payload = {
+            "results": [
+                {
+                    "uuid": "mcf-1",
+                    "title": "AI Product Intern",
+                    "description": "Build AI product experiments in Singapore.",
+                    "status": "Open",
+                    "employmentTypes": [{"employmentType": "Internship/Attachment"}],
+                    "postedCompany": {"name": "PUBLIC API CO"},
+                    "address": {"isOverseas": False, "districts": []},
+                    "metadata": {
+                        "expiryDate": "2099-08-13",
+                        "jobDetailsUrl": "https://www.mycareersfuture.gov.sg/job/product/ai-product-intern-mcf-1",
+                    },
+                }
+            ]
+        }
+        with mock.patch.object(server, "http_post_json", return_value=payload) as post:
+            jobs, failures = server.fetch_mycareersfuture_jobs(10, "SG")
+
+        self.assertFalse(failures)
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["source"], "MyCareersFuture")
+        self.assertGreater(post.call_count, 1)
+        self.assertTrue(all("/v2/search?" in call.args[0] for call in post.call_args_list))
+
+    def test_internship_sg_search_parser_keeps_early_career_roles_and_rejects_noise(self):
+        html = """
+        <a class="panel" href="/internships/product-design-intern-example-1">
+          <span class="lbl">EXAMPLE DESIGN PTE. LTD.</span>
+          <h3>Product Design Intern</h3>
+          <div class="mono"><span>Singapore</span><span>·</span><span>Design</span><span>·</span><span>Hybrid</span><span>·</span><span>SGD 1,200/mo</span></div>
+        </a>
+        <a class="panel" href="/internships/senior-product-manager-example-2">
+          <span class="lbl">SENIOR CO</span>
+          <h3>Senior Product Manager</h3>
+          <div class="mono"><span>Singapore</span><span>·</span><span>Product</span></div>
+        </a>
+        <a class="panel" href="/internships/ai-product-trainee-example-3">
+          <span class="lbl">AI STARTUP SG</span>
+          <h3>AI Product Trainee</h3>
+          <div class="mono"><span>ONE-NORTH</span><span>·</span><span>Product</span><span>·</span><span>On-site</span></div>
+        </a>
+        """
+
+        jobs = server.parse_internship_sg_search_html(html, "product design", 10)
+
+        self.assertEqual([job["position"] for job in jobs], ["Product Design Intern", "AI Product Trainee"])
+        self.assertEqual(jobs[0]["company"], "EXAMPLE DESIGN PTE. LTD.")
+        self.assertEqual(jobs[0]["source"], "Internship.sg")
+        self.assertEqual(jobs[0]["location"], "Singapore")
+        self.assertIn("SGD 1,200/mo", jobs[0]["jd_text"])
+
+    def test_internship_sg_detail_parser_enriches_job_and_keeps_original_link_as_evidence(self):
+        html = """
+        <h1>Product Design Intern</h1>
+        <a href="/companies/example-design">EXAMPLE DESIGN PTE. LTD.</a>
+        <dl>
+          <div><dt>Location</dt><dd>ONE-NORTH</dd><dd>Hybrid</dd></div>
+          <div><dt>Allowance</dt><dd>SGD 1,200/mo</dd></div>
+          <div><dt>Duration</dt><dd>6 months</dd></div>
+        </dl>
+        <div class="prose-editorial"><p class="whitespace-pre-line">Work with product managers, conduct user research and build Figma prototypes. Strong interns may convert to a full-time role.</p></div>
+        <a href="https://www.mycareersfuture.gov.sg/job/design/product-design-intern-example">the original listing</a>
+        """
+        listing = {
+            "company": "EXAMPLE DESIGN PTE. LTD.",
+            "position": "Product Design Intern",
+            "source": "Internship.sg",
+            "url": "https://internship.sg/internships/product-design-intern-example-1",
+            "jd_text": "Listing summary.",
+        }
+
+        job = server.parse_internship_sg_detail_html(html, listing)
+
+        self.assertEqual(job["location"], "ONE-NORTH · Hybrid")
+        self.assertEqual(job["salary_text"], "SGD 1,200/mo")
+        self.assertEqual(job["job_type"], "Internship · 6 months")
+        self.assertIn("conduct user research", job["jd_text"])
+        self.assertIn("Original listing: https://www.mycareersfuture.gov.sg/", job["jd_text"])
 
     def test_job_metadata_detects_employment_conversion_and_salary(self):
         metadata = server.job_metadata(
@@ -331,8 +1106,384 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(metadata["salary_min"], 1200)
         self.assertEqual(metadata["salary_max"], 1800)
         self.assertEqual(server.detect_employment_type("Graduate Product Designer"), "Graduate")
+        self.assertEqual(server.detect_employment_type("Product & AI Engagement Trainee"), "Graduate")
         self.assertEqual(server.detect_employment_type("Full-time UX Designer"), "Full-time")
         self.assertEqual(server.detect_employment_type("Contract UX Researcher"), "Contract")
+        self.assertEqual(
+            server.detect_employment_type(
+                "Python Developer",
+                "Seniority level Mid-Senior level Employment type Contract Job function Information Technology",
+                "Internship / Full-time",
+            ),
+            "Contract",
+        )
+
+    def test_salary_parser_rejects_benefits_funding_and_business_metrics(self):
+        false_salary_texts = [
+            "We provide a monthly fund of $100 to spend on activities that bring you joy.",
+            "The company has raised over SGD 95 million from renowned investors.",
+            "ShopBack powers over US$5.5 billion in annual sales.",
+            "The firm manages over US$7 billion in assets.",
+            "Our clients are enterprise, paying $60-144K per year.",
+        ]
+
+        for text in false_salary_texts:
+            with self.subTest(text=text):
+                self.assertIsNone(server.parse_salary_info("Product Intern", text, "Internship", "SG")["salary_min"])
+
+    def test_salary_parser_handles_compact_ranges_and_skips_earlier_metrics(self):
+        annual = server.parse_salary_info(
+            "Project Management Intern",
+            "The company raised $20 million. Compensation is $60-144K per year.",
+            "Internship",
+            "SG",
+        )
+        monthly = server.parse_salary_info(
+            "Software Engineering Intern",
+            "Base pay range SGD 1,000/mo - SGD 1,500/mo.",
+            "Internship",
+            "SG",
+        )
+
+        self.assertEqual((annual["salary_min"], annual["salary_max"], annual["salary_period"]), (60000, 144000, "yearly"))
+        self.assertEqual((monthly["salary_min"], monthly["salary_max"], monthly["salary_period"]), (1000, 1500, "monthly"))
+
+    def test_salary_parser_rejects_implausible_source_ranges(self):
+        malformed_ranges = [
+            "Base pay range SGD 1/mo - SGD 1,500/mo.",
+            "Compensation $3.90 - $6.80 a month.",
+            "Pay range $600 - $900 per hour.",
+        ]
+
+        for text in malformed_ranges:
+            with self.subTest(text=text):
+                self.assertIsNone(server.parse_salary_info("Product Intern", text, "Internship", "SG")["salary_min"])
+
+    def test_direction_matching_does_not_promote_generic_jd_keywords(self):
+        unrelated = {
+            "company": "Bifrost AI",
+            "position": "Supply Chain Intern",
+            "source": "ATS · AI 初创",
+            "jd_text": "Improve automation workflows, create a prototype, and prepare content for stakeholders.",
+        }
+        ai_direction = server.career_direction_by_id("ai-product")
+        ux_direction = server.career_direction_by_id("ux-product-design")
+        growth_direction = server.career_direction_by_id("growth-content")
+
+        self.assertEqual(server.direction_match_for_job(unrelated, ai_direction)[0], 0)
+        self.assertEqual(server.direction_match_for_job(unrelated, ux_direction)[0], 0)
+        self.assertEqual(server.direction_match_for_job(unrelated, growth_direction)[0], 0)
+        self.assertNotIn("ai_related", server.content_tag_ids_for_job(unrelated))
+        self.assertNotIn("ux_related", server.content_tag_ids_for_job(unrelated))
+
+    def test_content_tags_clean_job_text_once(self):
+        job = {
+            "company": "Example AI",
+            "position": "AI Product Intern",
+            "source": "ATS · 科技初创",
+            "jd_text": "Build AI product prototypes and support user research.",
+        }
+        with mock.patch.object(server, "job_matching_text", wraps=server.job_matching_text) as matching_text:
+            server.content_tag_ids_for_job(job)
+
+        self.assertEqual(matching_text.call_count, 1)
+
+    def test_ranking_reuses_direction_matches_for_job_tags(self):
+        job = {
+            "company": "Example AI",
+            "position": "AI Product Intern",
+            "source": "ATS · 科技初创",
+            "region": "SG",
+            "location": "Singapore",
+            "status": "New",
+            "score": 4.0,
+            "employment_type": "Internship",
+            "jd_text": "Build AI product prototypes and support user research.",
+        }
+        with mock.patch.object(server, "direction_match_for_job", wraps=server.direction_match_for_job) as matcher:
+            server.rank_job_with_preferences(
+                job,
+                ["ai-product", "ux-product-design", "user-research"],
+                {},
+                "SG",
+                set(),
+                server.default_region_context("SG"),
+            )
+
+        checked_ids = [call.args[1]["id"] for call in matcher.call_args_list]
+        self.assertEqual(checked_ids.count("ai-product"), 1)
+        self.assertEqual(checked_ids.count("ux-product-design"), 1)
+        self.assertEqual(checked_ids.count("user-research"), 1)
+
+    def test_direction_matching_does_not_relabel_finance_or_legal_roles_from_company_boilerplate(self):
+        company_boilerplate = (
+            "We build AI automation, LLM workflows and UX tools. "
+            "Our product team runs user research, usability tests and product design."
+        )
+        jobs = [
+            {"company": "k-ID", "position": "Finance Intern (SG)", "source": "ATS · 科技初创", "jd_text": company_boilerplate},
+            {"company": "k-ID", "position": "Legal Internship Program 2026", "source": "ATS · 科技初创", "jd_text": company_boilerplate},
+        ]
+
+        for job in jobs:
+            with self.subTest(position=job["position"]):
+                self.assertEqual(server.direction_match_for_job(job, server.career_direction_by_id("ai-product"))[0], 0)
+                self.assertEqual(server.direction_match_for_job(job, server.career_direction_by_id("ux-product-design"))[0], 0)
+                self.assertNotIn("ai_related", server.content_tag_ids_for_job(job))
+                self.assertNotIn("product_related", server.content_tag_ids_for_job(job))
+                self.assertNotIn("ux_related", server.content_tag_ids_for_job(job))
+
+    def test_ranking_softly_downweights_non_target_functions_without_direction_matches(self):
+        jobs = [
+            {
+                "company": "Example Product Company",
+                "position": "Finance Intern",
+                "source": "Company Site / ATS",
+                "region": "SG",
+                "location": "Singapore",
+                "status": "Recommended",
+                "score": 3.5,
+                "employment_type": "Internship",
+                "jd_text": "Support accounting, tax reporting, and financial controls in Singapore.",
+            },
+            {
+                "company": "Hardware Company",
+                "position": "Repair Operations Intern",
+                "source": "Company Site / ATS",
+                "region": "SG",
+                "location": "Singapore",
+                "status": "Recommended",
+                "score": 4.2,
+                "employment_type": "Internship",
+                "jd_text": "Oversee repair centre operations, RMA receiving, and maintenance reporting.",
+            },
+        ]
+
+        for job in jobs:
+            with self.subTest(position=job["position"]):
+                ranked = server.rank_job_with_preferences(
+                    job,
+                    ["ai-product", "ux-product-design"],
+                    {},
+                    "SG",
+                    set(),
+                    server.default_region_context("SG"),
+                )
+
+                self.assertEqual(ranked["direction_mismatch_adjustment"], -0.55)
+                self.assertIn("方向偏离", ranked["recommendation_reason"])
+
+    def test_direction_matching_keeps_title_and_specific_jd_signals(self):
+        ai_job = {
+            "company": "Example Group",
+            "position": "GenAI Product Development Intern",
+            "source": "LinkedIn",
+            "jd_text": "Build internal tools with product teams.",
+        }
+        ux_job = {
+            "company": "Example Group",
+            "position": "Digital Project Intern",
+            "source": "InternSG",
+            "jd_text": "Create UX flows and Figma prototypes for customer journeys.",
+        }
+
+        self.assertGreater(server.direction_match_for_job(ai_job, server.career_direction_by_id("ai-product"))[0], 0)
+        self.assertGreater(server.direction_match_for_job(ux_job, server.career_direction_by_id("ux-product-design"))[0], 0)
+        self.assertIn("ai_related", server.content_tag_ids_for_job(ai_job))
+        self.assertIn("ux_related", server.content_tag_ids_for_job(ux_job))
+
+    def test_ai_product_direction_rejects_pure_technical_and_presales_roles(self):
+        ai_product = server.career_direction_by_id("ai-product")
+        ux_product = server.career_direction_by_id("ux-product-design")
+        unrelated_jobs = [
+            {
+                "company": "Gaming Co",
+                "position": "AI Data Engineer Intern",
+                "source": "Company Site / ATS",
+                "jd_text": "Build AI data pipelines, automate workflows, and deploy models for product teams.",
+            },
+            {
+                "company": "Storage Co",
+                "position": "Data Science Intern",
+                "source": "Company Site / ATS",
+                "jd_text": "Use machine learning and AI to analyze product telemetry and prototype models.",
+            },
+            {
+                "company": "Payments Co",
+                "position": "Pre-Sales Payment & Partner Success Intern",
+                "source": "Company Site / ATS",
+                "jd_text": "Explain AI workflows and product design choices to prospective partners.",
+            },
+            {
+                "company": "Autonomy Co",
+                "position": "Autonomous Vehicle Integration & Validation Intern (Software Tools)",
+                "source": "Company Site / ATS",
+                "jd_text": "Build physical AI systems, automate validation, and improve tool usability.",
+            },
+            {
+                "company": "Robotics Co",
+                "position": "Robot Learning Intern",
+                "source": "Company Site / ATS",
+                "jd_text": "Develop AI training algorithms, prototype robot interaction, and evaluate models.",
+            },
+            {
+                "company": "Consulting Co",
+                "position": "AI/Data Intern",
+                "source": "Company Site / ATS",
+                "jd_text": "Analyze data with AI and prepare insights for digital transformation projects.",
+            },
+        ]
+
+        for job in unrelated_jobs:
+            with self.subTest(position=job["position"]):
+                self.assertEqual(server.direction_match_for_job(job, ai_product)[0], 0)
+                self.assertEqual(server.direction_match_for_job(job, ux_product)[0], 0)
+                self.assertNotIn("product_related", server.content_tag_ids_for_job(job))
+
+        genuine_product_job = {
+            "company": "Applied AI Co",
+            "position": "AI Product Engineer Intern",
+            "source": "Company Site / ATS",
+            "jd_text": "Own user discovery, product requirements, prototypes, and AI feature evaluation.",
+        }
+        self.assertGreater(server.direction_match_for_job(genuine_product_job, ai_product)[0], 0)
+        self.assertIn("product_related", server.content_tag_ids_for_job(genuine_product_job))
+
+    def test_pure_technical_ai_role_gets_product_profile_mismatch_penalty(self):
+        job = {
+            "company": "Storage Co",
+            "position": "AI Data Engineer Intern",
+            "source": "Company Site / ATS",
+            "region": "SG",
+            "location": "Singapore",
+            "status": "Recommended",
+            "score": 4.6,
+            "employment_type": "Internship",
+            "jd_text": "Build AI data pipelines, automate workflows, and deploy models for product teams.",
+        }
+
+        ranked = server.rank_job_with_preferences(
+            job,
+            ["ai-product", "ux-product-design", "user-research"],
+            {},
+            "SG",
+            set(),
+            server.default_region_context("SG"),
+        )
+
+        self.assertEqual(ranked["matched_directions"], [])
+        self.assertEqual(ranked["direction_mismatch_adjustment"], -0.55)
+        self.assertIn("方向偏离", ranked["recommendation_reason"])
+
+    def test_job_tags_ignore_source_queries_and_internsg_related_jobs(self):
+        linkedin_job = {
+            "company": "Flo Energy",
+            "position": "Product Design Intern",
+            "source": "LinkedIn",
+            "jd_text": "Design customer experiences in Figma.\nSource query: ai ux intern",
+        }
+        internsg_job = {
+            "company": "Payments Co",
+            "position": "Funding and Settlement Intern",
+            "source": "InternSG",
+            "jd_text": "Job Description\nSupport reconciliation and settlement automation.\nRelated Job Searches: Computing and Machine Learning Intern",
+        }
+
+        self.assertNotIn("ai_related", server.content_tag_ids_for_job(linkedin_job))
+        self.assertNotIn("ai_related", server.content_tag_ids_for_job(internsg_job))
+
+    def test_direction_matching_ignores_internal_official_board_focus_metadata(self):
+        engineering_job = {
+            "company": "Example AI",
+            "position": "Engineering Internship Program 2026",
+            "source": "ATS · 科技初创",
+            "jd_text": (
+                "Example AI official career match\n"
+                "Role: Engineering Internship Program 2026\n"
+                "Focus: Product, HCI, UX, engineering and operations internships\n"
+                "Source: https://jobs.example.com/example\n"
+                "URL: https://jobs.example.com/example/engineering-intern\n\n"
+                "Build backend services, write production code, and maintain cloud infrastructure."
+            ),
+        }
+
+        matching_text = server.job_matching_text(engineering_job)
+
+        self.assertNotIn("official career match", matching_text.lower())
+        self.assertNotIn("focus", matching_text.lower())
+        self.assertEqual(
+            server.direction_match_for_job(engineering_job, server.career_direction_by_id("ux-product-design"))[0],
+            0,
+        )
+        self.assertNotIn("ux_related", server.content_tag_ids_for_job(engineering_job))
+
+    def test_product_tag_requires_product_role_evidence(self):
+        ai_compliance_job = {
+            "company": "Utilities Group",
+            "position": "Group Ethics & Compliance Intern",
+            "source": "InternSG",
+            "jd_text": "Job Description\nSupport AI-enabled due diligence workflows and test AI pilots.",
+        }
+        product_marketing_job = {
+            "company": "Example Group",
+            "position": "Product Marketing Intern",
+            "source": "JobStreet",
+            "jd_text": "Support launches, campaigns, and customer research.",
+        }
+
+        self.assertIn("ai_related", server.content_tag_ids_for_job(ai_compliance_job))
+        self.assertNotIn("product_related", server.content_tag_ids_for_job(ai_compliance_job))
+        self.assertIn("product_related", server.content_tag_ids_for_job(product_marketing_job))
+        self.assertEqual(
+            server.detect_employment_type(
+                "Principal / Lead Designer, Consulting Practice",
+                "What we are looking for: 10+ years in experience design.",
+                "Internship / Full-time",
+            ),
+            "Full-time",
+        )
+
+    def test_job_metadata_detects_pathway_conversion_visa_and_language(self):
+        metadata = server.job_metadata(
+            "AI Product Intern",
+            "Return offer track with full-time conversion, Mandarin support for Greater China users, and Employment Pass sponsorship support for strong performers.",
+            "Internship",
+            "SG",
+            "ByteDance",
+            "Company Site / ATS",
+        )
+
+        self.assertEqual(metadata["conversion_signal"], "strong")
+        self.assertEqual(metadata["visa_sponsorship_signal"], "possible")
+        self.assertEqual(metadata["language_signal"], "chinese_friendly_possible")
+        self.assertGreaterEqual(metadata["pathway_score"], 4.0)
+        self.assertTrue(metadata["pathway_evidence_json"])
+
+        blocked = server.job_metadata(
+            "UX Intern",
+            "Singaporeans / PR only. No visa sponsorship. Short internship with no conversion to full-time.",
+            "Internship",
+            "SG",
+        )
+        self.assertEqual(blocked["conversion_signal"], "none")
+        self.assertEqual(blocked["visa_sponsorship_signal"], "unlikely")
+
+        right_to_work_only = server.job_metadata(
+            "Marketing Associate Intern",
+            "Based in Singapore with right to work in Singapore (visa sponsorship not available). Opportunity for full-time conversion based on performance.",
+            "Internship",
+            "SG",
+        )
+        self.assertEqual(right_to_work_only["conversion_signal"], "strong")
+        self.assertEqual(right_to_work_only["visa_sponsorship_signal"], "unlikely")
+
+        risk_tags = server.job_tag_ids_for_preferences(
+            {**right_to_work_only, "position": "Marketing Associate Intern", "source": "Company Site / ATS"},
+            "SG",
+            {"sponsorship_signal": "possible"},
+        )
+        self.assertIn("visa_unlikely", risk_tags)
+        self.assertNotIn("visa_possible", risk_tags)
 
     def test_company_jsonld_and_greenhouse_jobs_parse(self):
         html = """
@@ -351,6 +1502,12 @@ class ParserTests(unittest.TestCase):
                     "absolute_url": "https://boards.greenhouse.io/example/jobs/123",
                     "content": "Internship role for UX research and service design.",
                     "location": {"name": "Singapore"},
+                },
+                {
+                    "title": "Growth Intern",
+                    "absolute_url": "https://boards.greenhouse.io/example/jobs/456",
+                    "content": "Internship role for growth research.",
+                    "location": {"name": "Mexico City, Mexico"},
                 }
             ]
         }
@@ -358,7 +1515,130 @@ class ParserTests(unittest.TestCase):
             ats_jobs, failures = server.fetch_company_ats_jobs("https://boards.greenhouse.io/example", "Example AI", "UX research", "SG", "Singapore", 5)
 
         self.assertFalse(failures)
-        self.assertEqual(ats_jobs[0]["position"], "UX Research Intern")
+        self.assertEqual([job["position"] for job in ats_jobs], ["UX Research Intern"])
+
+    def test_smartrecruiters_jobs_use_public_posting_urls_and_employment_metadata(self):
+        payload = {
+            "content": [
+                {
+                    "id": "744000135159089",
+                    "name": "Luxury Retail Intern",
+                    "ref": "https://api.smartrecruiters.com/v1/companies/carousellgroup/postings/744000135159089",
+                    "company": {"identifier": "CarousellGroup", "name": "Carousell Group"},
+                    "location": {"city": "Singapore", "country": "sg", "fullLocation": "Singapore, , Singapore"},
+                    "typeOfEmployment": {"id": "intern", "label": "Intern"},
+                    "experienceLevel": {"id": "internship", "label": "Internship"},
+                    "department": {"label": "Sales"},
+                }
+            ]
+        }
+        with mock.patch.object(server, "http_get", return_value=json.dumps(payload)):
+            jobs, failures = server.fetch_company_ats_jobs(
+                "https://careers.smartrecruiters.com/carousellgroup",
+                "Carousell Group",
+                "Marketplace and product internships",
+                "SG",
+                "Singapore",
+                5,
+            )
+
+        self.assertFalse(failures)
+        self.assertEqual(
+            jobs[0]["url"],
+            "https://jobs.smartrecruiters.com/CarousellGroup/744000135159089-luxury-retail-intern",
+        )
+        self.assertIn("Employment: Intern", jobs[0]["jd_text"])
+        self.assertIn("Experience: Internship", jobs[0]["jd_text"])
+        self.assertEqual(jobs[0]["location"], "Singapore, Singapore")
+
+    def test_smartrecruiters_pages_until_target_region_and_rejects_foreign_jobs(self):
+        foreign_page = {
+            "offset": 0,
+            "limit": 100,
+            "totalFound": 101,
+            "content": [
+                {
+                    "id": "foreign-1",
+                    "name": "Product Intern",
+                    "location": {"fullLocation": "Tallinn, Estonia"},
+                }
+            ],
+        }
+        singapore_page = {
+            "offset": 100,
+            "limit": 100,
+            "totalFound": 101,
+            "content": [
+                {
+                    "id": "sg-1",
+                    "name": "Analytics Intern",
+                    "company": {"identifier": "Wise"},
+                    "location": {"fullLocation": "Singapore, Singapore"},
+                    "typeOfEmployment": {"label": "Intern"},
+                }
+            ],
+        }
+
+        def smartrecruiters_fixture(url, **_kwargs):
+            return json.dumps(singapore_page if "offset=100" in url else foreign_page)
+
+        with mock.patch.object(server, "http_get", side_effect=smartrecruiters_fixture) as fetch:
+            jobs, failures = server.fetch_company_ats_jobs(
+                "https://careers.smartrecruiters.com/Wise",
+                "Wise",
+                "Fintech analytics and product internships",
+                "SG",
+                "Singapore",
+                5,
+            )
+
+        self.assertFalse(failures)
+        self.assertEqual([job["position"] for job in jobs], ["Analytics Intern"])
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_lever_and_ashby_require_explicit_target_region(self):
+        lever_payload = [
+            {
+                "text": "Product Intern",
+                "hostedUrl": "https://jobs.lever.co/example/sg",
+                "descriptionPlain": "Product internship.",
+                "categories": {"location": "Singapore"},
+            },
+            {
+                "text": "Marketing Intern",
+                "hostedUrl": "https://jobs.lever.co/example/us",
+                "descriptionPlain": "Marketing internship.",
+                "categories": {"location": "New York, United States"},
+            },
+        ]
+        ashby_payload = {
+            "jobs": [
+                {
+                    "title": "AI Product Intern",
+                    "jobUrl": "https://jobs.ashbyhq.com/example/sg",
+                    "descriptionPlain": "AI product internship.",
+                    "locationName": "Singapore",
+                },
+                {
+                    "title": "Research Intern",
+                    "jobUrl": "https://jobs.ashbyhq.com/example/mx",
+                    "descriptionPlain": "Research internship.",
+                    "locationName": "Mexico City, Mexico",
+                },
+            ]
+        }
+
+        with mock.patch.object(server, "http_get", return_value=json.dumps(lever_payload)):
+            lever_jobs, _ = server.fetch_company_ats_jobs(
+                "https://jobs.lever.co/example", "Example", "Product", "SG", "Singapore", 10
+            )
+        with mock.patch.object(server, "http_get", return_value=json.dumps(ashby_payload)):
+            ashby_jobs, _ = server.fetch_company_ats_jobs(
+                "https://jobs.ashbyhq.com/example", "Example", "Product", "SG", "Singapore", 10
+            )
+
+        self.assertEqual([job["position"] for job in lever_jobs], ["Product Intern"])
+        self.assertEqual([job["position"] for job in ashby_jobs], ["AI Product Intern"])
 
     def test_workable_company_jobs_parse_and_filter_region(self):
         payload = {
@@ -387,6 +1667,75 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(failures)
         self.assertEqual([job["position"] for job in jobs], ["AI Product Manager Intern"])
         self.assertEqual(jobs[0]["source"], "Company Site / ATS")
+
+    def test_workday_company_jobs_parse_details_and_filter_region(self):
+        listing = {
+            "total": 3,
+            "jobPostings": [
+                {
+                    "title": "AI Product Intern",
+                    "externalPath": "/job/Singapore/AI-Product-Intern_R-1001",
+                    "locationsText": "Singapore",
+                    "postedOn": "Posted Today",
+                },
+                {
+                    "title": "Community Intern",
+                    "externalPath": "/job/Singapore/Community-Intern_R-1002",
+                    "locationsText": "Singapore",
+                    "postedOn": "Posted 2 Days Ago",
+                },
+                {
+                    "title": "Marketing Intern",
+                    "externalPath": "/job/Shah-Alam/Marketing-Intern_R-1003",
+                    "locationsText": "Shah Alam",
+                    "postedOn": "Posted Today",
+                },
+            ],
+        }
+        details = {
+            "R-1001": {
+                "jobPostingInfo": {
+                    "title": "AI Product Intern",
+                    "location": "Singapore",
+                    "jobDescription": "<p>Build AI product experiments and research user needs.</p>",
+                    "externalUrl": "https://circles.wd103.myworkdayjobs.com/Circles/job/Singapore/AI-Product-Intern_R-1001",
+                    "timeType": "Full time",
+                    "jobReqId": "R-1001",
+                }
+            },
+            "R-1002": {
+                "jobPostingInfo": {
+                    "title": "Community Intern",
+                    "location": "Singapore",
+                    "jobDescription": "<p>Support community growth and content.</p>",
+                    "externalUrl": "https://circles.wd103.myworkdayjobs.com/Circles/job/Singapore/Community-Intern_R-1002",
+                    "timeType": "Full time",
+                    "jobReqId": "R-1002",
+                }
+            },
+        }
+
+        def detail_fixture(url, **_kwargs):
+            key = next(key for key in details if key in url)
+            return json.dumps(details[key])
+
+        with mock.patch.object(server, "http_post_json", return_value=listing) as post:
+            with mock.patch.object(server, "http_get", side_effect=detail_fixture):
+                jobs, failures = server.fetch_company_ats_jobs(
+                    "https://circles.wd103.myworkdayjobs.com/en-US/Circles",
+                    "Circles",
+                    "AI product and community internships",
+                    "SG",
+                    "Singapore",
+                    5,
+                )
+
+        self.assertFalse(failures)
+        self.assertEqual([job["position"] for job in jobs], ["AI Product Intern", "Community Intern"])
+        self.assertTrue(all(job["source"] == "Company Site / ATS" for job in jobs))
+        self.assertIn("Build AI product experiments", jobs[0]["jd_text"])
+        self.assertEqual(jobs[0]["location"], "Singapore")
+        self.assertIn("/wday/cxs/circles/Circles/jobs", post.call_args.args[0])
 
 
 class DailyRunTests(TempAppMixin, unittest.TestCase):
@@ -419,7 +1768,986 @@ class DailyRunTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(len(calls), 2)
 
 
+class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
+    def test_supplemental_recommendations_put_direction_mismatches_after_aligned_jobs(self):
+        current_date = server.today()
+        older_date = (server.dt.date.today() - server.dt.timedelta(days=3)).strftime(server.DATE_FMT)
+        mismatched = {
+            "id": 1,
+            "company": "Fresh Finance Co",
+            "position": "Finance Intern",
+            "source": "ATS",
+            "status": "Recommended",
+            "batch_date": current_date,
+            "score": 4.9,
+            "rank_score": 4.9,
+            "base_score": 4.9,
+            "direction_mismatch_adjustment": -0.55,
+        }
+        aligned = {
+            "id": 2,
+            "company": "Product Studio",
+            "position": "Product Intern",
+            "source": "InternSG",
+            "status": "Recommended",
+            "batch_date": older_date,
+            "score": 4.0,
+            "rank_score": 4.2,
+            "base_score": 4.0,
+            "direction_mismatch_adjustment": 0.0,
+        }
+
+        payload = server.recommendation_payload_from_ranked_jobs(
+            [mismatched, aligned],
+            "SG",
+            2,
+            {},
+            ["ux_product_design"],
+            "user_selected",
+            [],
+        )
+
+        self.assertEqual([job["id"] for job in payload["jobs"]], [2, 1])
+
+    def test_workbench_diversifies_sources_and_fills_when_alternatives_are_insufficient(self):
+        jobs = [
+            {"id": index, "company": f"Company {index}", "source": source, "score": 5 - index / 100}
+            for index, source in enumerate(["Source A"] * 10 + ["Source B"] * 4 + ["Source C"] * 4 + ["Source D"] * 4, 1)
+        ]
+
+        diversified = server.diversified_workbench_recommendations(jobs, set(), 10)
+        only_one_source = server.diversified_workbench_recommendations(jobs[:8], set(), 8)
+
+        source_counts = {}
+        for job in diversified:
+            source_counts[job["source"]] = source_counts.get(job["source"], 0) + 1
+        self.assertEqual(len(diversified), 10)
+        self.assertLessEqual(max(source_counts.values()), 3)
+        self.assertEqual(len(only_one_source), 8)
+
+    def test_workbench_never_backfills_more_than_two_jobs_from_one_company(self):
+        jobs = [
+            {"id": index, "company": "Focused Company", "source": f"Source {index}", "score": 5 - index / 100}
+            for index in range(1, 7)
+        ]
+
+        selected = server.diversified_workbench_recommendations(jobs, set(), 6)
+
+        self.assertEqual([job["id"] for job in selected], [1, 2])
+
+    def test_weekly_bucket_ranks_by_fit_instead_of_inherited_freshness_order(self):
+        lower_fit_today = {
+            "id": 1,
+            "company": "Today Finance Co",
+            "source": "ATS",
+            "status": "Recommended",
+            "found_date": server.today(),
+            "rank_score": 3.4,
+            "base_score": 3.1,
+        }
+        stronger_older = {
+            "id": 2,
+            "company": "Strong Product Co",
+            "source": "InternSG",
+            "status": "Recommended",
+            "found_date": (server.dt.date.today() - server.dt.timedelta(days=3)).strftime(server.DATE_FMT),
+            "rank_score": 4.8,
+            "base_score": 4.2,
+        }
+
+        selected = server.workbench_recommendation_bucket(
+            [lower_fit_today, stronger_older],
+            set(),
+            limit=1,
+            max_age_days=6,
+        )
+
+        self.assertEqual([job["id"] for job in selected], [2])
+    def test_compact_job_payload_keeps_list_fields_and_omits_full_jd(self):
+        job = server.upsert_job(
+            {
+                "company": "Compact Co",
+                "position": "Product Design Intern",
+                "source": "LinkedIn",
+                "url": "https://example.com/compact-job",
+                "jd_text": "Singapore product design internship. " * 200,
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.6, status='Recommended' where id=?", (job["id"],))
+
+        full = server.list_jobs_payload({"region": ["SG"]})
+        compact = server.list_jobs_payload({"region": ["SG"], "compact": ["1"]})
+        full_job = next(item for item in full if item["id"] == job["id"])
+        compact_job = next(item for item in compact if item["id"] == job["id"])
+
+        self.assertIn("jd_text", full_job)
+        self.assertNotIn("jd_text", compact_job)
+        self.assertNotIn("jd_cn_text", compact_job)
+        self.assertEqual(compact_job["company"], "Compact Co")
+        self.assertEqual(compact_job["fit_score"], full_job["fit_score"])
+
+    def test_low_score_user_state_jobs_survive_recommendation_pool_limit(self):
+        stamp = server.now_iso()
+        day = server.today()
+        with server.get_db() as conn:
+            conn.executemany(
+                """
+                insert into jobs(
+                    company, position, name, source, url, location, jd_text, jd_hash,
+                    score, status, found_date, last_checked_at, created_at, updated_at,
+                    region, city, source_region
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        f"Pool Company {index}", "Product Intern", f"Pool Company {index} - Product Intern",
+                        "Fixture", f"https://example.com/pool-{index}", "Singapore", "Singapore product internship.",
+                        f"pool-{index}", 5.0, "Recommended", day, stamp, stamp, stamp, "SG", "Singapore", "SG",
+                    )
+                    for index in range(505)
+                ],
+            )
+            state_ids = {}
+            for status in ["Apply Queue", "Applied", "Dropped"]:
+                cursor = conn.execute(
+                    """
+                    insert into jobs(
+                        company, position, name, source, url, location, jd_text, jd_hash,
+                        score, status, found_date, last_checked_at, created_at, updated_at,
+                        region, city, source_region
+                    ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"State {status}", "Low Score Role", f"State {status} - Low Score Role",
+                        "Fixture", f"https://example.com/state-{status.lower().replace(' ', '-')}", "Singapore",
+                        "Singapore role retained by user state.", f"state-{status}", 0.1, status,
+                        day, stamp, stamp, stamp, "SG", "Singapore", "SG",
+                    ),
+                )
+                state_ids[status] = cursor.lastrowid
+
+        jobs = server.list_jobs({"region": ["SG"], "city": ["Singapore"]})
+        returned_ids = {job["id"] for job in jobs}
+        self.assertTrue(set(state_ids.values()).issubset(returned_ids))
+
+        payload = server.workbench_payload({"region": ["SG"], "city": ["Singapore"]})
+        queue_action = next(item for item in payload["today_actions"] if item["kind"] == "queue")
+        self.assertEqual(payload["summary"]["apply_queue"], 1)
+        self.assertIn("1 个岗位", queue_action["title"])
+
+    def test_workbench_payload_is_stable_when_empty(self):
+        payload = server.workbench_payload({"region": ["SG"]})
+
+        self.assertEqual(payload["region"], "SG")
+        self.assertIn("summary", payload)
+        self.assertIn("today_actions", payload)
+        self.assertEqual(payload["top_recommendations"], [])
+        self.assertEqual(payload["today_new_recommendations"], [])
+        self.assertEqual(payload["weekly_unqueued_recommendations"], [])
+        self.assertEqual(payload["discovery_summary"]["today_discovered"], 0)
+        self.assertEqual(payload["discovery_summary"]["today_actionable"], 0)
+        self.assertEqual(payload["recommendation_sections"][0]["id"], "today_new")
+        self.assertEqual(payload["recommendation_sections"][1]["id"], "weekly_unqueued")
+        self.assertEqual(payload["queue_preview"], [])
+        self.assertEqual(payload["followups"], [])
+        self.assertEqual(payload["followup_count"], 0)
+        self.assertEqual(payload["stale_application_count"], 0)
+        self.assertEqual(payload["scan_overview"]["status"], "pending")
+
+    def test_workbench_reports_full_followup_count_separately_from_preview(self):
+        applied_date = (server.dt.date.today() - server.dt.timedelta(days=8)).strftime(server.DATE_FMT)
+        for index in range(7):
+            job = server.upsert_job(
+                {
+                    "company": f"Followup Co {index}",
+                    "position": "Product Intern",
+                    "source": "LinkedIn",
+                    "url": f"https://example.com/followup-{index}",
+                    "jd_text": "Singapore product internship.",
+                }
+            )
+            with server.get_db() as conn:
+                conn.execute(
+                    "update jobs set status='Applied', applied_date=? where id=?",
+                    (applied_date, job["id"]),
+                )
+
+        payload = server.workbench_payload({"region": ["SG"]})
+
+        self.assertEqual(payload["followup_count"], 7)
+        self.assertEqual(len(payload["followups"]), 5)
+
+    def test_workbench_separates_long_unanswered_applications_from_followups(self):
+        due_date = (server.dt.date.today() - server.dt.timedelta(days=7)).strftime(server.DATE_FMT)
+        stale_date = (server.dt.date.today() - server.dt.timedelta(days=20)).strftime(server.DATE_FMT)
+        due_job = server.upsert_job({"company": "Due Co", "position": "UX Intern", "source": "LinkedIn", "url": "https://example.com/due", "jd_text": "Singapore UX internship."})
+        stale_job = server.upsert_job({"company": "Stale Co", "position": "Product Intern", "source": "LinkedIn", "url": "https://example.com/stale", "jd_text": "Singapore product internship."})
+        with server.get_db() as conn:
+            conn.execute("update jobs set status='Applied', applied_date=? where id=?", (due_date, due_job["id"]))
+            conn.execute("update jobs set status='Applied', applied_date=? where id=?", (stale_date, stale_job["id"]))
+
+        payload = server.workbench_payload({"region": ["SG"]})
+
+        self.assertEqual(payload["followup_count"], 1)
+        self.assertEqual(payload["stale_application_count"], 1)
+        self.assertIn(due_job["id"], [job["id"] for job in payload["followups"]])
+        self.assertNotIn(stale_job["id"], [job["id"] for job in payload["followups"]])
+        self.assertIn("最后确认一次后归档", server.next_step_for_job(server.get_job(stale_job["id"])))
+
+    def test_recorded_followup_temporarily_clears_reminder_and_second_followup_can_become_stale(self):
+        applied_date = (server.dt.date.today() - server.dt.timedelta(days=20)).strftime(server.DATE_FMT)
+        job = server.upsert_job({"company": "Follow Through Co", "position": "Product Intern", "source": "LinkedIn", "url": "https://example.com/follow-through", "jd_text": "Singapore product internship."})
+        with server.get_db() as conn:
+            conn.execute("update jobs set status='Applied', applied_date=? where id=?", (applied_date, job["id"]))
+
+        first = server.set_decision(job["id"], "FollowUpSent")
+        self.assertEqual(first["followup_count"], 1)
+        self.assertEqual(first["last_followup_at"], server.today())
+        self.assertEqual(server.application_action_bucket(first), "waiting")
+        self.assertIn("等待反馈", server.next_step_for_job(first))
+
+        old_followup = (server.dt.date.today() - server.dt.timedelta(days=8)).strftime(server.DATE_FMT)
+        with server.get_db() as conn:
+            conn.execute("update jobs set last_followup_at=?, followup_count=2 where id=?", (old_followup, job["id"]))
+        self.assertEqual(server.application_action_bucket(server.get_job(job["id"])), "stale")
+
+        paused = server.set_decision(job["id"], "Pause")
+        self.assertEqual(paused["status"], "Closed")
+
+    def test_workbench_recommendations_do_not_embed_full_job_descriptions(self):
+        job = server.upsert_job(
+            {
+                "company": "Lean Workbench Co",
+                "position": "AI Product Intern",
+                "source": "InternSG",
+                "url": "https://example.com/lean-workbench",
+                "jd_text": "Singapore AI product internship with conversion potential. " * 200,
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.8, status='Recommended' where id=?", (job["id"],))
+
+        payload = server.workbench_payload({"region": ["SG"]})
+        recommendation = next(item for item in payload["top_recommendations"] if item["id"] == job["id"])
+
+        self.assertNotIn("jd_text", recommendation)
+        self.assertNotIn("jd_cn_text", recommendation)
+        self.assertIn("recommendation_reason", recommendation)
+
+    def test_workbench_uses_lightweight_job_rows_and_defers_supplemental_pool(self):
+        job = server.upsert_job(
+            {
+                "company": "Lean Payload Co",
+                "position": "Product Research Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/lean-payload",
+                "jd_text": "Singapore product research internship with conversion potential. " * 200,
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.8, status='Recommended' where id=?", (job["id"],))
+
+        payload = server.workbench_payload({"region": ["SG"]})
+        recommendation = next(item for item in payload["today_new_recommendations"] if item["id"] == job["id"])
+
+        self.assertEqual(payload["recommendations"]["jobs"], [])
+        self.assertIn("recommendation_reason", recommendation)
+        self.assertIn("user_tag_matches", recommendation)
+        self.assertNotIn("resume_path", recommendation)
+        self.assertNotIn("cover_letter_path", recommendation)
+        self.assertNotIn("score_breakdown", recommendation)
+        self.assertNotIn("fit_reasons", recommendation)
+        self.assertNotIn("matched_directions", recommendation)
+        self.assertLessEqual(len(recommendation), 36)
+
+        full_job = server.job_payload(server.get_job(job["id"]))
+        self.assertIn("jd_text", full_job)
+        self.assertGreater(len(full_job["jd_text"]), 1000)
+
+    def test_workbench_ranks_each_job_only_once(self):
+        for index in range(4):
+            job = server.upsert_job(
+                {
+                    "company": f"Single Pass Co {index}",
+                    "position": "Product Intern",
+                    "source": "InternSG",
+                    "url": f"https://example.com/single-pass-{index}",
+                    "jd_text": "Singapore product internship with UX research.",
+                }
+            )
+            with server.get_db() as conn:
+                conn.execute("update jobs set score=4.2, status='Recommended' where id=?", (job["id"],))
+
+        with mock.patch.object(server, "rank_job_with_preferences", wraps=server.rank_job_with_preferences) as rank_job:
+            server.workbench_payload({"region": ["SG"]})
+
+        self.assertEqual(rank_job.call_count, 4)
+
+    def test_recommendations_collapse_duplicate_roles_and_preserve_all_links(self):
+        duplicate_ids = []
+        for source, url in [
+            ("LinkedIn", "https://www.linkedin.com/jobs/view/4440000001"),
+            ("JobStreet", "https://sg.jobstreet.com/job/94400001"),
+            ("Indeed", "https://sg.indeed.com/viewjob?jk=duplicate-role"),
+        ]:
+            job = server.upsert_job(
+                {
+                    "company": "Duplicate Role Co",
+                    "position": "AI Product Intern",
+                    "source": source,
+                    "url": url,
+                    "jd_text": "Singapore AI product internship with UX research.",
+                }
+            )
+            duplicate_ids.append(job["id"])
+            with server.get_db() as conn:
+                conn.execute("update jobs set score=4.9, status='Recommended' where id=?", (job["id"],))
+        for index in range(3):
+            job = server.upsert_job(
+                {
+                    "company": f"Unique Role Co {index}",
+                    "position": f"Product Design Intern {index}",
+                    "source": "InternSG",
+                    "url": f"https://example.com/unique-role-{index}",
+                    "jd_text": "Singapore product design internship.",
+                }
+            )
+            with server.get_db() as conn:
+                conn.execute("update jobs set score=4.2, status='Recommended' where id=?", (job["id"],))
+
+        payload = server.list_today_recommendations({"region": ["SG"], "limit": ["4"]})
+        jobs = payload["jobs"]
+        duplicate_job = next(job for job in jobs if job["company"] == "Duplicate Role Co")
+
+        self.assertEqual(len(jobs), 4)
+        self.assertEqual(sum(1 for job in jobs if job["company"] == "Duplicate Role Co"), 1)
+        self.assertEqual(duplicate_job["duplicate_count"], 2)
+        self.assertEqual({item["id"] for item in duplicate_job["alternate_links"]}, set(duplicate_ids) - {duplicate_job["id"]})
+        self.assertEqual(len({job["dedupe_key"] for job in jobs}), 4)
+
+    def test_dedupe_collapses_cpf_legal_name_variants(self):
+        jobs = server.collapse_duplicate_job_groups([
+            {
+                "id": 1,
+                "region": "SG",
+                "city": "Singapore",
+                "company": "CPF Board",
+                "position": "GenAI Product Development Intern",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/1",
+            },
+            {
+                "id": 2,
+                "region": "SG",
+                "city": "Singapore",
+                "company": "Central Provident Fund Board",
+                "position": "GenAI Product Development Intern",
+                "source": "Careers@Gov",
+                "url": "https://jobs.careers.gov.sg/jobs/2",
+            },
+        ])
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["source_count"], 2)
+        self.assertEqual(jobs[0]["alternate_links"][0]["id"], 2)
+
+    def test_workbench_payload_surfaces_actions_queue_followups_and_limited_scan(self):
+        recommendation = server.upsert_job(
+            {
+                "company": "Pathway Co",
+                "position": "AI Product Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/workbench-rec",
+                "jd_text": "Singapore AI product internship with possible full-time conversion and Mandarin market work.",
+            }
+        )
+        queue_job = server.upsert_job(
+            {
+                "company": "Queue Co",
+                "position": "UX Intern",
+                "source": "InternSG",
+                "url": "https://example.com/workbench-queue",
+                "jd_text": "Singapore UX internship.",
+            }
+        )
+        applied_job = server.upsert_job(
+            {
+                "company": "Applied Co",
+                "position": "Product Ops Intern",
+                "source": "LinkedIn",
+                "url": "https://example.com/workbench-applied",
+                "jd_text": "Singapore product operations internship.",
+            }
+        )
+        old_applied = (server.dt.date.today() - server.dt.timedelta(days=5)).strftime(server.DATE_FMT)
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.4, status='Recommended' where id=?", (recommendation["id"],))
+            conn.execute("update jobs set score=4.1, status='Apply Queue' where id=?", (queue_job["id"],))
+            conn.execute("update jobs set score=4.0, status='Applied', applied_date=? where id=?", (old_applied, applied_job["id"]))
+        run_id = server.create_scan_run("manual", True, "SG")
+        server.finish_scan_run(run_id, "partial", 10, 8, 3, 1, [{"source": "JobStreet", "error": "limited"}])
+
+        payload = server.workbench_payload({"region": ["SG"]})
+        action_kinds = [item["kind"] for item in payload["today_actions"]]
+
+        self.assertIn(recommendation["id"], [job["id"] for job in payload["top_recommendations"]])
+        self.assertIn(recommendation["id"], [job["id"] for job in payload["today_new_recommendations"]])
+        self.assertIn(queue_job["id"], [job["id"] for job in payload["queue_preview"]])
+        self.assertIn(applied_job["id"], [job["id"] for job in payload["followups"]])
+        self.assertIn("recommendations", action_kinds)
+        self.assertIn("queue", action_kinds)
+        self.assertIn("followup", action_kinds)
+        self.assertEqual(payload["scan_overview"]["status"], "partial")
+        self.assertGreater(payload["scan_overview"]["failure_count"], 0)
+
+    def test_workbench_scan_overview_reports_job_quality_counts(self):
+        run_id = server.create_scan_run("manual", True, "SG")
+        source_run_id = server.create_scan_source_run(run_id, "LinkedIn")
+        server.finish_scan_source_run(
+            source_run_id,
+            "partial",
+            12,
+            9,
+            [{"error": "one limited result"}],
+            5,
+            4,
+            3,
+        )
+        server.finish_scan_run(
+            run_id,
+            "partial",
+            12,
+            9,
+            3,
+            1,
+            [{"source": "LinkedIn", "error": "one limited result"}],
+            5,
+            4,
+            3,
+        )
+
+        overview = server.workbench_payload({"region": ["SG"]})["scan_overview"]
+        linkedin = next(row for row in overview["sources"] if row["source"] == "LinkedIn")
+
+        self.assertEqual(overview["new_count"], 5)
+        self.assertEqual(overview["updated_count"], 4)
+        self.assertEqual(overview["duplicate_count"], 3)
+        self.assertIn("5 条新发现", overview["summary"])
+        self.assertEqual(linkedin["new_count"], 5)
+        self.assertEqual(linkedin["updated_count"], 4)
+        self.assertEqual(linkedin["duplicate_count"], 3)
+
+    def test_workbench_returns_twenty_priority_jobs_and_excludes_watched_company_jobs(self):
+        with server.get_db() as conn:
+            conn.execute(
+                """
+                insert into watch_companies(company, source, url, focus, region, status)
+                values(?, ?, ?, ?, ?, ?)
+                on conflict(region, company) do update set status='Watch'
+                """,
+                ("TikTok", "Company Site", "https://careers.tiktok.com/", "Product", "SG", "Watch"),
+            )
+        for index in range(10):
+            job = server.upsert_job(
+                {
+                    "company": "TikTok",
+                    "position": f"Product Intern {index}",
+                    "source": "LinkedIn",
+                    "url": f"https://example.com/tiktok-{index}",
+                    "jd_text": "Singapore product internship with Mandarin market work.",
+                }
+            )
+            with server.get_db() as conn:
+                conn.execute("update jobs set score=4.9, status='Recommended' where id=?", (job["id"],))
+        for index in range(24):
+            job = server.upsert_job(
+                {
+                    "company": f"Balanced Co {index}",
+                    "position": "Product Intern",
+                    "source": "InternSG",
+                    "url": f"https://example.com/balanced-{index}",
+                    "jd_text": "Singapore product internship.",
+                }
+            )
+            with server.get_db() as conn:
+                conn.execute("update jobs set score=4.2, status='Recommended' where id=?", (job["id"],))
+
+        payload = server.workbench_payload({"region": ["SG"]})
+        priority_companies = [job["company"] for job in payload["top_recommendations"]]
+
+        self.assertEqual(len(payload["top_recommendations"]), 20)
+        self.assertEqual(payload["watched_company_jobs"], [])
+        self.assertNotIn("TikTok", priority_companies)
+
+    def test_workbench_splits_today_and_weekly_unqueued_recommendations(self):
+        current_date = server.today()
+        week_date = (server.dt.date.today() - server.dt.timedelta(days=3)).strftime(server.DATE_FMT)
+        old_date = (server.dt.date.today() - server.dt.timedelta(days=8)).strftime(server.DATE_FMT)
+        today_ids = []
+        weekly_ids = []
+        for index in range(24):
+            job = server.upsert_job(
+                {
+                    "company": f"Today Co {index}",
+                    "position": "Product Intern",
+                    "source": "InternSG",
+                    "url": f"https://example.com/today-bucket-{index}",
+                    "jd_text": "Singapore product internship with possible full-time conversion.",
+                }
+            )
+            today_ids.append(job["id"])
+            with server.get_db() as conn:
+                conn.execute(
+                    "update jobs set score=4.6, status='Recommended', found_date=?, batch_date=?, recommended_date=? where id=?",
+                    (current_date, current_date, current_date, job["id"]),
+                )
+        for index in range(25):
+            job = server.upsert_job(
+                {
+                    "company": f"Weekly Co {index}",
+                    "position": "UX Intern",
+                    "source": "LinkedIn",
+                    "url": f"https://example.com/weekly-bucket-{index}",
+                    "jd_text": "Singapore UX internship with research and product work.",
+                }
+            )
+            weekly_ids.append(job["id"])
+            with server.get_db() as conn:
+                conn.execute(
+                    "update jobs set score=4.3, status='Recommended', found_date=?, batch_date=?, recommended_date=? where id=?",
+                    (week_date, week_date, week_date, job["id"]),
+                )
+        queue_job = server.upsert_job(
+            {
+                "company": "Queued Weekly Co",
+                "position": "Product Intern",
+                "source": "InternSG",
+                "url": "https://example.com/weekly-queued",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        applied_job = server.upsert_job(
+            {
+                "company": "Applied Weekly Co",
+                "position": "Product Intern",
+                "source": "InternSG",
+                "url": "https://example.com/weekly-applied",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        old_job = server.upsert_job(
+            {
+                "company": "Old Weekly Co",
+                "position": "Product Intern",
+                "source": "InternSG",
+                "url": "https://example.com/weekly-old",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set score=4.7, status='Apply Queue', found_date=?, batch_date=?, recommended_date=? where id=?",
+                (week_date, week_date, week_date, queue_job["id"]),
+            )
+            conn.execute(
+                "update jobs set score=4.7, status='Applied', found_date=?, batch_date=?, recommended_date=?, applied_date=? where id=?",
+                (week_date, week_date, week_date, week_date, applied_job["id"]),
+            )
+            conn.execute(
+                "update jobs set score=4.7, status='Recommended', found_date=?, batch_date=?, recommended_date=? where id=?",
+                (old_date, old_date, old_date, old_job["id"]),
+            )
+
+        payload = server.workbench_payload({"region": ["SG"]})
+        today_bucket_ids = [job["id"] for job in payload["today_new_recommendations"]]
+        weekly_bucket_ids = [job["id"] for job in payload["weekly_unqueued_recommendations"]]
+
+        self.assertEqual(len(today_bucket_ids), 20)
+        self.assertEqual(len(weekly_bucket_ids), 20)
+        self.assertTrue(set(today_bucket_ids).issubset(set(today_ids)))
+        self.assertTrue(set(weekly_bucket_ids).issubset(set(today_ids + weekly_ids)))
+        self.assertFalse(set(today_bucket_ids).intersection(weekly_bucket_ids))
+        self.assertNotIn(queue_job["id"], weekly_bucket_ids)
+        self.assertNotIn(applied_job["id"], weekly_bucket_ids)
+        self.assertNotIn(old_job["id"], weekly_bucket_ids)
+        self.assertEqual(payload["recommendation_sections"][0]["count"], 20)
+        self.assertEqual(payload["recommendation_sections"][1]["count"], 20)
+        self.assertGreaterEqual(payload["discovery_summary"]["today_discovered"], 24)
+        self.assertGreaterEqual(payload["discovery_summary"]["today_actionable"], 20)
+
+    def test_weekly_bucket_excludes_a_title_variant_already_shown_today(self):
+        current_date = server.today()
+        week_date = (server.dt.date.today() - server.dt.timedelta(days=3)).strftime(server.DATE_FMT)
+        today_job = server.upsert_job(
+            {
+                "company": "Duplicate AI Co",
+                "position": "Python Developer",
+                "source": "LinkedIn",
+                "url": "https://example.com/python-today",
+                "jd_text": "Singapore Python and AI role.",
+            }
+        )
+        weekly_job = server.upsert_job(
+            {
+                "company": "Duplicate AI Co",
+                "position": "Python Developer (AI / LLM / RAG)",
+                "source": "JobStreet",
+                "url": "https://example.com/python-weekly",
+                "jd_text": "Singapore Python and AI role.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set score=4.5, status='Recommended', found_date=?, batch_date=?, recommended_date=? where id=?",
+                (current_date, current_date, current_date, today_job["id"]),
+            )
+            conn.execute(
+                "update jobs set score=4.5, status='Recommended', found_date=?, batch_date=?, recommended_date=? where id=?",
+                (week_date, week_date, week_date, weekly_job["id"]),
+            )
+
+        payload = server.workbench_payload({"region": ["SG"]})
+
+        self.assertIn(today_job["id"], [job["id"] for job in payload["today_new_recommendations"]])
+        self.assertNotIn(weekly_job["id"], [job["id"] for job in payload["weekly_unqueued_recommendations"]])
+
+
 class RecommendationTests(TempAppMixin, unittest.TestCase):
+    def test_listing_freshness_excludes_old_unverified_linkedin_but_keeps_internsg_with_penalty(self):
+        stale_date = (server.dt.date.today() - server.dt.timedelta(days=35)).strftime(server.DATE_FMT)
+        common = {
+            "company": "Freshness Co",
+            "position": "Product Design Intern",
+            "status": "Recommended",
+            "score": 4.5,
+            "region": "SG",
+            "source_region": "SG",
+            "city": "Singapore",
+            "location": "Singapore",
+            "found_date": stale_date,
+            "last_checked_at": f"{stale_date}T08:00:00",
+            "updated_at": f"{stale_date}T08:00:00",
+            "eligibility_flags": [],
+            "employment_type": "Internship",
+        }
+        linkedin = {**common, "source": "LinkedIn", "url": "https://www.linkedin.com/jobs/view/123"}
+        internsg = {**common, "source": "InternSG", "url": "https://www.internsg.com/job/product-design-intern/"}
+
+        self.assertEqual(server.job_listing_freshness(linkedin)["status"], "likely_closed")
+        self.assertFalse(server.is_recommendation_available(linkedin))
+        self.assertEqual(server.job_listing_freshness(internsg)["status"], "verify")
+        self.assertTrue(server.is_recommendation_available(internsg))
+
+        ranked = server.rank_job_with_preferences(internsg, [], {}, "SG", set(), server.active_region_context("SG"))
+        self.assertEqual(ranked["listing_freshness_label"], "需确认有效")
+        self.assertLess(ranked["freshness_adjustment"], 0)
+        self.assertEqual(ranked["score_breakdown"]["freshness"], ranked["freshness_adjustment"])
+
+    def test_recent_verification_restores_an_old_discovered_job(self):
+        old_date = (server.dt.date.today() - server.dt.timedelta(days=60)).strftime(server.DATE_FMT)
+        job = {
+            "company": "Still Hiring Co",
+            "position": "Product Intern",
+            "source": "LinkedIn",
+            "url": "https://www.linkedin.com/jobs/view/456",
+            "status": "Recommended",
+            "score": 4.2,
+            "region": "SG",
+            "source_region": "SG",
+            "city": "Singapore",
+            "location": "Singapore",
+            "found_date": old_date,
+            "last_checked_at": server.now_iso(),
+            "updated_at": server.now_iso(),
+            "eligibility_flags": [],
+            "employment_type": "Internship",
+        }
+
+        freshness = server.job_listing_freshness(job)
+
+        self.assertEqual(freshness["status"], "verified")
+        self.assertEqual(freshness["label"], "今日已验证")
+        self.assertEqual(freshness["adjustment"], 0)
+        self.assertTrue(server.is_recommendation_available(job))
+
+    def test_strong_retention_pathway_can_rescue_a_near_threshold_internship(self):
+        pathway_job = server.upsert_job(
+            {
+                "company": "Conversion Studio",
+                "position": "Creative Intern",
+                "source": "Cultjobs",
+                "url": "https://example.com/pathway-rescue",
+                "jd_text": "Singapore creative internship with a potential opportunity for full-time conversion.",
+            }
+        )
+        ordinary_low = server.upsert_job(
+            {
+                "company": "Ordinary Studio",
+                "position": "Creative Intern",
+                "source": "Cultjobs",
+                "url": "https://example.com/ordinary-low",
+                "jd_text": "Singapore creative internship.",
+            }
+        )
+        hard_blocked = server.upsert_job(
+            {
+                "company": "Local Only Studio",
+                "position": "Creative Intern",
+                "source": "Cultjobs",
+                "url": "https://example.com/pathway-blocked",
+                "jd_text": "Singapore creative internship with full-time conversion. Singapore citizens and PR only.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=2.8, status='New' where id in (?, ?, ?)", (pathway_job["id"], ordinary_low["id"], hard_blocked["id"]))
+
+        pathway = server.get_job(pathway_job["id"])
+        ordinary = server.get_job(ordinary_low["id"])
+        blocked = server.get_job(hard_blocked["id"])
+
+        self.assertTrue(server.is_pathway_recommendation_candidate(pathway))
+        self.assertTrue(server.is_recommendation_available(pathway))
+        self.assertFalse(server.is_pathway_recommendation_candidate(ordinary))
+        self.assertFalse(server.is_recommendation_available(ordinary))
+        self.assertFalse(server.is_recommendation_available(blocked))
+        recommendations = server.list_today_recommendations({"region": ["SG"], "limit": ["20"]})["jobs"]
+        ranked = next(job for job in recommendations if job["id"] == pathway_job["id"])
+        self.assertTrue(ranked["pathway_candidate"])
+        self.assertIn("留新路径补充候选", ranked["recommendation_reason"])
+
+    def test_pathway_pool_is_not_lost_below_the_primary_five_hundred_row_cutoff(self):
+        pathway_job = server.upsert_job(
+            {
+                "company": "Deep Pathway Co",
+                "position": "Marketing Intern",
+                "source": "Cultjobs",
+                "url": "https://example.com/deep-pathway",
+                "jd_text": "Singapore internship with full-time conversion opportunity.",
+            }
+        )
+        stamp = server.now_iso()
+        rows = [
+            (
+                f"High Score Co {index}", "Product Intern", f"High Score Co {index} - Product Intern",
+                "LinkedIn", f"https://example.com/high-score-{index}", "Singapore product internship.",
+                f"hash-{index}", 4.0, "Recommended", server.today(), stamp, stamp, stamp,
+            )
+            for index in range(500)
+        ]
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=2.8, status='New' where id=?", (pathway_job["id"],))
+            conn.executemany(
+                """
+                insert into jobs(company, position, name, source, url, jd_text, jd_hash, score, status, found_date, last_checked_at, created_at, updated_at)
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+        jobs = server.list_jobs({"region": ["SG"]})
+
+        self.assertEqual(len(jobs), 501)
+        self.assertIn(pathway_job["id"], [job["id"] for job in jobs])
+
+    def test_today_recommendations_include_fresh_jobs_below_the_primary_row_cutoff(self):
+        common = {
+            "source": "Company Site / ATS",
+            "status": "Recommended",
+            "score": 3.5,
+            "rank_score": 3.5,
+            "base_score": 3.5,
+            "region": "SG",
+            "city": "Singapore",
+            "location": "Singapore",
+            "employment_type": "Internship",
+            "eligibility_flags": [],
+            "found_date": server.today(),
+        }
+        primary = {**common, "id": 1, "company": "Primary Co", "position": "Product Intern"}
+        fresh = {**common, "id": 2, "company": "Fresh Co", "position": "Analytics Intern"}
+
+        def jobs_fixture(params):
+            return [fresh] if params.get("date") else [primary]
+
+        with mock.patch.object(server, "list_jobs", side_effect=jobs_fixture):
+            with mock.patch.object(server, "apply_preference_scores_to_jobs", side_effect=lambda jobs, _region: jobs):
+                payload = server.list_today_recommendations({"region": ["SG"], "limit": ["20"]})
+
+        self.assertEqual({job["id"] for job in payload["jobs"]}, {1, 2})
+
+    def test_unknown_internship_pathway_generates_confirmation_tags_and_questions(self):
+        pathway = server.pathway_preference_for_job(
+            {
+                "company": "Unclear Internship Co",
+                "position": "Product Intern",
+                "employment_type": "Internship",
+                "conversion_signal": "unknown",
+                "visa_sponsorship_signal": "unknown",
+                "language_signal": "unknown",
+            },
+            {
+                "career_goal": "sg_internship_to_fulltime",
+                "conversion_priority": "high",
+                "sponsorship_priority": "high",
+                "language_preference": "chinese_friendly",
+                "preferred_company_groups": [],
+            },
+            "SG",
+        )
+
+        self.assertIn("转正待确认", pathway["pathway_tags"])
+        self.assertIn("工签待确认", pathway["pathway_tags"])
+        self.assertTrue(any("return offer" in item for item in pathway["pathway_questions"]))
+        self.assertTrue(any("EP 或 S Pass" in item for item in pathway["pathway_questions"]))
+
+    def test_navigation_titles_are_not_recommendable_jobs(self):
+        common = {
+            "company": "Example Co",
+            "status": "Recommended",
+            "score": 4.5,
+            "eligibility_flags": [],
+        }
+
+        for title in ["View all product jobs", "Careers", "Careers at Hypotenuse AI", "Open positions"]:
+            with self.subTest(title=title):
+                self.assertFalse(server.is_recommendation_available({**common, "position": title}))
+
+        self.assertTrue(server.is_recommendation_available({**common, "position": "Career Up Intern"}))
+        self.assertTrue(server.is_recommendation_available({**common, "position": "Careers Consultant Intern"}))
+        self.assertFalse(server.is_recommendation_available({**common, "company": "Glints / NodeFlair / Startups", "position": "Product Designer"}))
+        self.assertFalse(server.is_recommendation_available({**common, "company": "UI / UX Design Intern", "position": "UI / UX Design Intern"}))
+
+    def test_company_site_navigation_links_do_not_become_jobs(self):
+        navigation = server.company_job_record(
+            "Example AI",
+            "Careers at Example AI",
+            "/careers",
+            "SG",
+            "Singapore",
+            "AI / Product",
+            "https://example.com/careers",
+            "Careers at Example AI",
+        )
+        role = server.company_job_record(
+            "Example AI",
+            "Software Engineer Intern",
+            "/jobs/software-engineer-intern",
+            "SG",
+            "Singapore",
+            "AI / Product",
+            "https://example.com/careers",
+            "Build AI product experiences with the product team.",
+        )
+
+        self.assertIsNone(navigation)
+        self.assertIsNotNone(role)
+        for fake_title in ["Product Development Agency", "AI Chatbot", "Design FTO Search", "Engineering Agents", "Developer Center"]:
+            with self.subTest(fake_title=fake_title):
+                self.assertIsNone(
+                    server.company_job_record(
+                        "Example AI",
+                        fake_title,
+                        "/services/example",
+                        "SG",
+                        "Singapore",
+                        "AI / Product",
+                        "https://example.com/careers",
+                        fake_title,
+                    )
+                )
+        self.assertIsNone(
+            server.company_job_record(
+                "Example AI",
+                "Back-End Developer " + ("Design and operate reliable services. " * 8),
+                "/services/backend",
+                "SG",
+                "Singapore",
+                "AI / Product",
+                "https://example.com/careers",
+                "Backend services",
+            )
+        )
+
+    def test_company_jobs_exclude_legacy_navigation_and_regulatory_rows(self):
+        fake = server.upsert_job(
+            {
+                "company": "PDD",
+                "position": "沪ICP备2024094620号-2",
+                "source": "Company Site",
+                "url": "https://beian.miit.gov.cn/",
+                "location": "Singapore",
+                "jd_text": "PDD official career page footer.",
+            }
+        )
+        real = server.upsert_job(
+            {
+                "company": "PDD",
+                "position": "Product Design Intern",
+                "source": "Company Site",
+                "url": "https://example.com/pdd-product-intern",
+                "location": "Singapore",
+                "jd_text": "Singapore product design internship.",
+            }
+        )
+
+        payload = server.company_jobs_payload("PDD", "SG", "Singapore")
+        ids = [job["id"] for job in payload["jobs"]]
+
+        self.assertNotIn(fake["id"], ids)
+        self.assertIn(real["id"], ids)
+
+    def test_pdd_official_roles_require_explicit_singapore_location(self):
+        common = {
+            "company": "PDD",
+            "title": "Product Design Intern",
+            "url": "/campus/intern/detail/123",
+            "region": "SG",
+            "city": "Singapore",
+            "focus": "Internship and product roles",
+            "source_url": "https://careers.pddglobalhr.com/campus/intern",
+            "description": "Product design internship.",
+        }
+
+        self.assertIsNone(server.company_job_record(**common))
+        self.assertIsNotNone(server.company_job_record(**common, location="Singapore"))
+        self.assertIsNone(server.company_job_record(**common, location="Shanghai, China"))
+
+    def test_company_site_jobs_reject_explicit_foreign_locations(self):
+        common = {
+            "company": "Example AI",
+            "title": "Product Engineer Intern",
+            "url": "/jobs/product-engineer-intern",
+            "region": "SG",
+            "city": "Singapore",
+            "focus": "AI / Product",
+            "source_url": "https://example.com/careers",
+            "description": "Build product experiences with the engineering team.",
+        }
+
+        self.assertIsNotNone(server.company_job_record(**common, location="Singapore"))
+        self.assertIsNotNone(server.company_job_record(**common, location="Jurong"))
+        self.assertIsNotNone(server.company_job_record(**common, location="Remote"))
+        self.assertIsNone(server.company_job_record(**common, location="Sydney, Australia"))
+        self.assertIsNone(server.company_job_record(**common, location="Taipei, Taiwan"))
+
+        recommendation = {
+            "company": "Example AI",
+            "position": "Product Engineer Intern",
+            "status": "Recommended",
+            "score": 4.5,
+            "eligibility_flags": [],
+            "region": "SG",
+            "city": "Singapore",
+        }
+        self.assertTrue(server.is_recommendation_available({**recommendation, "location": "Jurong"}))
+        self.assertFalse(server.is_recommendation_available({**recommendation, "location": "Sydney, Australia"}))
+        self.assertFalse(server.is_recommendation_available({
+            **recommendation,
+            "source": "Company Site / ATS",
+            "location": "Mexico City, Mexico",
+        }))
+
     def test_applied_dropped_and_hard_flags_do_not_recommend(self):
         good = server.upsert_job(
             {
@@ -453,6 +2781,9 @@ class RecommendationTests(TempAppMixin, unittest.TestCase):
 
         self.assertFalse(server.is_recommendation_available(server.get_job(good["id"])))
         self.assertFalse(server.is_recommendation_available(server.get_job(dropped["id"])))
+        restored = server.set_decision(dropped["id"], "Restore")
+        self.assertEqual(restored["status"], "Recommended")
+        self.assertTrue(server.is_recommendation_available(restored))
         self.assertIn("citizen_or_pr_only", server.get_job(blocked["id"])["eligibility_flags"])
         self.assertFalse(server.is_recommendation_available(server.get_job(blocked["id"])))
 
@@ -487,6 +2818,298 @@ class RecommendationTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(ranked["salary_fit"], "low")
         self.assertIn("薪资偏低", ranked["salary_fit_label"])
         self.assertIn(job["id"], [item["id"] for item in recommendations])
+
+    def test_queue_payload_uses_same_fit_score_as_workbench(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "internship",
+                    "target_directions": ["ai-product"],
+                },
+            }
+        )
+        job = server.upsert_job(
+            {
+                "company": "Consistent Co",
+                "position": "AI Product Intern",
+                "source": "JobStreet",
+                "url": "https://sg.jobstreet.com/job/score-consistency",
+                "jd_text": "Singapore AI product intern LLM workflow automation UX research.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.2, status='Recommended' where id=?", (job["id"],))
+
+        workbench_job = next(
+            item for item in server.list_today_recommendations({"limit": ["20"], "region": ["SG"]})["jobs"]
+            if item["id"] == job["id"]
+        )
+        server.set_decision(job["id"], "Apply")
+        queue_job = next(
+            item for item in server.list_jobs_payload({"status": ["Apply Queue"], "region": ["SG"]})
+            if item["id"] == job["id"]
+        )
+
+        self.assertEqual(queue_job["score"], 4.2)
+        self.assertEqual(queue_job["base_score"], workbench_job["base_score"])
+        self.assertEqual(queue_job["rank_score"], workbench_job["rank_score"])
+        self.assertEqual(queue_job["fit_score"], workbench_job["fit_score"])
+
+    def test_pathway_score_reorders_sg_retention_internships(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "internship",
+                    "target_directions": ["ai-product"],
+                    "career_goal": "sg_internship_to_fulltime",
+                    "conversion_priority": "high",
+                    "sponsorship_priority": "high",
+                    "language_preference": "chinese_friendly",
+                    "preferred_company_groups": ["greater_china", "ai_startup"],
+                },
+            }
+        )
+        pathway_job = server.upsert_job(
+            {
+                "company": "Pathway AI Studio",
+                "position": "AI Product Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/pathway-ai-studio-intern",
+                "jd_text": "Singapore AI product internship with return offer track, full-time conversion opportunity, Mandarin and Chinese market work, Employment Pass sponsorship support for strong performers.",
+            }
+        )
+        risky_job = server.upsert_job(
+            {
+                "company": "Generic Studio",
+                "position": "AI Product Intern",
+                "source": "JobStreet",
+                "url": "https://sg.jobstreet.com/job/no-pathway",
+                "jd_text": "Singapore AI product internship. No visa sponsorship. No conversion to full-time.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.3, status='Recommended' where id in (?, ?)", (pathway_job["id"], risky_job["id"]))
+
+        recommendations = server.list_today_recommendations({"limit": ["20"], "region": ["SG"]})["jobs"]
+        pathway_ranked = next(item for item in recommendations if item["id"] == pathway_job["id"])
+        risky_ranked = next(item for item in recommendations if item["id"] == risky_job["id"])
+
+        self.assertLess(recommendations.index(pathway_ranked), recommendations.index(risky_ranked))
+        self.assertGreater(pathway_ranked["rank_score"], risky_ranked["rank_score"])
+        self.assertIn("可转正", pathway_ranked["pathway_tags"])
+        self.assertIn("工签可能", pathway_ranked["pathway_tags"])
+        self.assertIn("中文友好可能", pathway_ranked["pathway_tags"])
+
+    def test_metadata_backfill_corrects_stale_no_sponsorship_signal(self):
+        job = server.upsert_job(
+            {
+                "company": "No Sponsor Startup",
+                "position": "Product Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/no-sponsor-startup",
+                "jd_text": "Singapore internship. Visa sponsorship not available. Opportunity for full-time conversion based on performance.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set visa_sponsorship_signal='possible', pathway_score=4.5 where id=?", (job["id"],))
+            server.backfill_job_metadata(conn)
+
+        corrected = server.get_job(job["id"])
+        self.assertEqual(corrected["visa_sponsorship_signal"], "unlikely")
+        self.assertLess(corrected["pathway_score"], 4.5)
+
+    def test_metadata_backfill_clears_stale_business_metric_salary(self):
+        job = server.upsert_job(
+            {
+                "company": "Metric AI",
+                "position": "Product Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/metric-ai-intern",
+                "jd_text": "The company raised SGD 95 million. Join our Singapore product internship.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set salary_min=95, salary_max=95, salary_currency='SGD', salary_period='unknown', salary_text='raised SGD 95 million' where id=?",
+                (job["id"],),
+            )
+            server.backfill_job_metadata(conn)
+
+        corrected = server.get_job(job["id"])
+        self.assertIsNone(corrected["salary_min"])
+        self.assertEqual(corrected["salary_period"], "unknown")
+        self.assertEqual(corrected["salary_fit"], "unknown")
+
+    def test_internship_priority_demotes_high_experience_roles(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "internship",
+                    "career_goal": "sg_internship_to_fulltime",
+                },
+            }
+        )
+        intern = server.upsert_job(
+            {
+                "company": "Good Internship Co",
+                "position": "Product Design Intern",
+                "source": "InternSG",
+                "url": "https://www.internsg.com/job/good-internship/",
+                "jd_text": "Singapore product design internship with UX research and prototype work.",
+            }
+        )
+        senior = server.upsert_job(
+            {
+                "company": "Public Digital Studio",
+                "position": "Principal / Lead Designer, Consulting Practice",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/high-experience-role",
+                "jd_text": "Singapore product and UX role. What we are looking for: 10+ years in experience design.",
+                "job_type": "Internship / Full-time",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.0, status='Recommended' where id in (?, ?)", (intern["id"], senior["id"]))
+
+        recommendations = server.list_today_recommendations({"limit": ["20"], "region": ["SG"]})["jobs"]
+        intern_ranked = next(item for item in recommendations if item["id"] == intern["id"])
+        senior_ranked = next(item for item in recommendations if item["id"] == senior["id"])
+
+        self.assertLess(recommendations.index(intern_ranked), recommendations.index(senior_ranked))
+        self.assertEqual(senior_ranked["employment_type"], "Full-time")
+        self.assertEqual(senior_ranked["employment_fit_label"], "年限偏高")
+
+    def test_user_selected_tags_reorder_and_explain_recommendations(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "both",
+                    "preferred_job_tags": ["source_official", "chinese_friendly", "conversion_possible"],
+                    "muted_job_tags": ["source_jobstreet", "visa_unlikely"],
+                },
+            }
+        )
+        preferred = server.upsert_job(
+            {
+                "company": "Mandarin Product Lab",
+                "position": "Product Operations Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/user-tag-preferred",
+                "jd_text": "Singapore internship with possible full-time conversion, Mandarin support for Chinese market product operations.",
+            }
+        )
+        muted = server.upsert_job(
+            {
+                "company": "Generic Marketplace",
+                "position": "Product Operations Intern",
+                "source": "JobStreet",
+                "url": "https://sg.jobstreet.com/job/user-tag-muted",
+                "jd_text": "Singapore internship. No visa sponsorship. Product operations support.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.1, status='Recommended' where id in (?, ?)", (preferred["id"], muted["id"]))
+
+        recommendations = server.list_today_recommendations({"limit": ["20"], "region": ["SG"]})["jobs"]
+        preferred_ranked = next(item for item in recommendations if item["id"] == preferred["id"])
+        muted_ranked = next(item for item in recommendations if item["id"] == muted["id"])
+
+        self.assertLess(recommendations.index(preferred_ranked), recommendations.index(muted_ranked))
+        self.assertGreater(preferred_ranked["user_tag_adjustment"], 0)
+        self.assertLess(muted_ranked["user_tag_adjustment"], 0)
+        self.assertIn("官网 / ATS", [item["label"] for item in preferred_ranked["user_tag_matches"]])
+        self.assertIn("JobStreet", [item["label"] for item in muted_ranked["user_tag_mutes"]])
+        self.assertIn("少看标签", muted_ranked["recommendation_reason"])
+
+    def test_lightweight_tags_cannot_overpower_a_muted_contract_role(self):
+        preference = server.user_tag_preference_for_job(
+            {
+                "position": "Python Developer",
+                "employment_type": "Contract",
+                "source": "LinkedIn",
+                "found_date": server.today(),
+                "jd_text": "AI product automation with UX collaboration.",
+                "salary_fit": "unknown",
+            },
+            {
+                "preferred_job_tags": ["source_linkedin", "fresh_today", "ux_related", "product_related", "ai_related"],
+                "muted_job_tags": ["contract"],
+            },
+            "SG",
+        )
+
+        self.assertLessEqual(preference["user_tag_adjustment"], 0.35)
+        self.assertIn("contract", [item["id"] for item in preference["user_tag_mutes"]])
+
+    def test_muted_roles_sort_after_non_muted_roles_even_with_other_tag_matches(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "both",
+                    "preferred_job_tags": ["source_linkedin", "fresh_today", "ai_related", "product_related"],
+                    "muted_job_tags": ["contract"],
+                },
+            }
+        )
+        contract = server.upsert_job({"company": "Contract AI Co", "position": "Python Developer", "source": "LinkedIn", "url": "https://example.com/muted-contract", "job_type": "Contract", "jd_text": "Singapore AI product automation contract role."})
+        internship = server.upsert_job({"company": "Internship Co", "position": "Operations Intern", "source": "InternSG", "url": "https://example.com/non-muted-intern", "job_type": "Internship", "jd_text": "Singapore operations internship."})
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=5.0, status='Recommended' where id=?", (contract["id"],))
+            conn.execute("update jobs set score=3.0, status='Recommended' where id=?", (internship["id"],))
+
+        recommendations = server.list_today_recommendations({"limit": ["20"], "region": ["SG"]})["jobs"]
+
+        contract_index = next(index for index, job in enumerate(recommendations) if job["id"] == contract["id"])
+        internship_index = next(index for index, job in enumerate(recommendations) if job["id"] == internship["id"])
+        self.assertLess(internship_index, contract_index)
+
+    def test_preferred_tags_change_top_recommendation_range(self):
+        server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "employment_priority": "both",
+                    "preferred_job_tags": ["source_official"],
+                    "muted_job_tags": [],
+                },
+            }
+        )
+        official = server.upsert_job(
+            {
+                "company": "Official Match Co",
+                "position": "Product Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/official-match",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        for index in range(7):
+            job = server.upsert_job(
+                {
+                    "company": f"Broad Source {index}",
+                    "position": "Product Intern",
+                    "source": "LinkedIn",
+                    "url": f"https://example.com/broad-{index}",
+                    "jd_text": "Singapore product internship.",
+                }
+            )
+            with server.get_db() as conn:
+                conn.execute("update jobs set score=4.8, status='Recommended' where id=?", (job["id"],))
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.76, status='Recommended' where id=?", (official["id"],))
+
+        payload = server.list_today_recommendations({"limit": ["5"], "region": ["SG"]})
+        top_ids = [job["id"] for job in payload["jobs"]]
+        official_ranked = next(item for item in payload["jobs"] if item["id"] == official["id"])
+
+        self.assertIn(official["id"], top_ids)
+        self.assertGreater(official_ranked["user_tag_priority"], 0)
+        self.assertGreaterEqual(payload["tag_scope"]["matched_jobs"], 1)
 
 
 class MultiRegionTests(TempAppMixin, unittest.TestCase):
@@ -538,6 +3161,30 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
         self.assertIn("ai-product", [item["value"] for item in sg_options["direction_options"]])
         self.assertIn("AI 与产品", [item["category"] for item in sg_options["direction_options"]])
         self.assertIn("monthly", sg_options["salary_band_options"])
+        self.assertIn("sg_internship_to_fulltime", [item["value"] for item in sg_options["career_goal_options"]])
+        self.assertIn("chinese_friendly", [item["value"] for item in sg_options["language_preference_options"]])
+        self.assertIn("greater_china", [item["value"] for item in sg_options["company_group_options"]])
+        tag_values = [item["value"] for item in sg_options["job_tag_options"]]
+        self.assertIn("conversion_possible", tag_values)
+        self.assertIn("visa_possible", tag_values)
+        self.assertIn("source_official", tag_values)
+        self.assertIn("fresh_today", tag_values)
+        self.assertIn("high_experience", tag_values)
+
+    def test_user_context_saves_selectable_job_tags_and_filters_invalid_values(self):
+        context = server.save_user_context(
+            {
+                "active_region": "SG",
+                "context": {
+                    "preferred_job_tags": ["internship", "visa_possible", "not-a-real-tag"],
+                    "muted_job_tags": ["high_experience", "source_jobstreet", "also-fake"],
+                },
+            }
+        )
+        sg_context = context["contexts"]["SG"]
+
+        self.assertEqual(sg_context["preferred_job_tags"], ["internship", "visa_possible"])
+        self.assertEqual(sg_context["muted_job_tags"], ["high_experience", "source_jobstreet"])
 
     def test_singapore_company_catalog_has_new_radar_fields(self):
         catalog = server.company_catalog("SG")
@@ -559,12 +3206,22 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
             "PropertyGuru Group",
             "EPOS",
             "Moomoo Singapore",
+            "Ant International",
+            "Alibaba Cloud Singapore",
+            "Lark",
+            "Huawei Singapore",
+            "SHEIN Singapore",
+            "Singtel",
         ]:
             self.assertIn(company, by_company)
             self.assertTrue(by_company[company].get("recommend_reason"))
             self.assertTrue(by_company[company].get("tags"))
             self.assertIn("matched_jobs_count", by_company[company])
             self.assertTrue(by_company[company].get("aliases"))
+            self.assertTrue(by_company[company].get("company_group"))
+            self.assertTrue(by_company[company].get("language_signal"))
+            self.assertTrue(by_company[company].get("sponsorship_signal"))
+            self.assertTrue(by_company[company].get("official_careers_url"))
 
         self.assertIn("中文友好概率较高", by_company["POP MART Singapore"]["tags"])
         self.assertEqual(by_company["YouTrip"]["url"], "https://apply.workable.com/youtrip/?lng=en")
@@ -625,6 +3282,47 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
         self.assertGreater(catalog["WIZ.AI"]["matched_jobs_count"], 0)
         self.assertGreater(catalog["ADVANCE.AI"]["matched_jobs_count"], 0)
 
+    def test_dismissed_catalog_company_hides_jobs_until_refollowed(self):
+        job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Canva",
+                "position": "Design Platform Intern",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/canva-dismiss-test",
+                "jd_text": "Singapore design platform internship for product design and UX.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.5, status='Recommended' where id=?", (job["id"],))
+        catalog_before = {item["company"]: item for item in server.company_catalog("SG")}
+        canva = catalog_before["Canva"]
+        self.assertFalse(canva.get("watched"))
+        self.assertGreater(canva["matched_jobs_count"], 0)
+        self.assertIn(job["id"], [item["id"] for item in server.list_today_recommendations({"region": ["SG"], "limit": ["50"]})["jobs"]])
+
+        dismissed = server.dismiss_watch_company({**canva, "region": "SG"})
+        self.assertEqual(dismissed["status"], "Dropped")
+        catalog_hidden = {item["company"]: item for item in server.company_catalog("SG")}["Canva"]
+        hidden_payload = server.company_jobs_payload("Canva", "SG")
+        hidden_jobs = server.list_jobs_payload({"region": ["SG"]})
+        hidden_job = next(item for item in hidden_jobs if item["id"] == job["id"])
+        hidden_recommendations = server.list_today_recommendations({"region": ["SG"], "limit": ["50"]})["jobs"]
+
+        self.assertTrue(catalog_hidden["dismissed"])
+        self.assertEqual(catalog_hidden["matched_jobs_count"], 0)
+        self.assertEqual(hidden_payload["jobs"], [])
+        self.assertEqual(hidden_payload["last_scan_status"], "hidden")
+        self.assertTrue(hidden_job["company_hidden_by_watchlist"])
+        self.assertNotIn(job["id"], [item["id"] for item in hidden_recommendations])
+
+        server.add_watch_company({**canva, "region": "SG", "user_added": False})
+        restored_payload = server.company_jobs_payload("Canva", "SG")
+        restored_recommendations = server.list_today_recommendations({"region": ["SG"], "limit": ["50"]})["jobs"]
+
+        self.assertIn(job["id"], [item["id"] for item in restored_payload["jobs"]])
+        self.assertNotIn(job["id"], [item["id"] for item in restored_recommendations])
+
     def test_user_context_catalog_and_watchlist_crud(self):
         regions = server.regions_payload()
         self.assertEqual(regions["active_region"], "SG")
@@ -663,7 +3361,7 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
         server.delete_watch_company(added["id"])
         self.assertFalse([item for item in server.watchlist("HK") if item["company"] == "Test HK Co"])
 
-    def test_active_region_filters_recommendations_and_company_boosts(self):
+    def test_active_region_filters_recommendations_and_routes_watched_company_jobs_to_company_section(self):
         server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
         server.add_watch_company(
             {
@@ -701,11 +3399,91 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
 
         recommendations = server.list_today_recommendations({"limit": ["20"]})
         ids = [job["id"] for job in recommendations["jobs"]]
-        self.assertIn(cn_job["id"], ids)
+        self.assertNotIn(cn_job["id"], ids)
         self.assertNotIn(sg_job["id"], ids)
-        boosted = next(job for job in recommendations["jobs"] if job["id"] == cn_job["id"])
-        self.assertGreater(boosted["company_boost"], 0)
-        self.assertEqual(boosted["region_fit"], 1.0)
+        company_payload = server.company_jobs_payload("ByteDance", "CN", "Shanghai")
+        self.assertIn(cn_job["id"], [job["id"] for job in company_payload["jobs"]])
+        watched_job = next(job for job in server.list_jobs_payload({"region": ["CN"], "city": ["Shanghai"]}) if job["id"] == cn_job["id"])
+        self.assertTrue(watched_job["company_watched_by_user"])
+
+    def test_supplemental_candidate_flag_excludes_watched_company_jobs(self):
+        server.add_watch_company(
+            {
+                "region": "SG",
+                "company": "WIZ.AI",
+                "aliases": ["WIZ HOLDINGS PTE LTD"],
+                "url": "https://www.wiz.ai/pages/join-us.html",
+                "focus": "AI internships",
+            }
+        )
+        watched_job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "WIZ HOLDINGS PTE LTD",
+                "position": "AI Product Intern",
+                "source": "LinkedIn",
+                "url": "https://example.com/wiz-supplemental",
+                "jd_text": "Singapore AI product internship with Mandarin market work.",
+            }
+        )
+        other_job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Independent Product Lab",
+                "position": "Product Intern",
+                "source": "InternSG",
+                "url": "https://example.com/independent-supplemental",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.8, status='Recommended' where id=?", (watched_job["id"],))
+            conn.execute("update jobs set score=4.2, status='Recommended' where id=?", (other_job["id"],))
+
+        jobs = server.list_jobs_payload({"region": ["SG"], "compact": ["1"]})
+        jobs_by_id = {job["id"]: job for job in jobs}
+
+        self.assertFalse(jobs_by_id[watched_job["id"]]["supplemental_candidate"])
+        self.assertTrue(jobs_by_id[other_job["id"]]["supplemental_candidate"])
+        recommendations = server.list_today_recommendations({"region": ["SG"], "limit": ["20"]})
+        self.assertNotIn(watched_job["id"], [job["id"] for job in recommendations["jobs"]])
+
+    def test_supplemental_candidates_exclude_watched_source_when_company_name_is_unreliable(self):
+        watched_source_job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Careers Portal",
+                "position": "Product Intern",
+                "source": "关注公司公开来源",
+                "url": "https://example.com/watched-source-product-intern",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set score=4.8, status='Recommended' where id=?",
+                (watched_source_job["id"],),
+            )
+
+        payload = server.list_jobs_payload({"region": ["SG"], "compact": ["1"]})
+        job = next(item for item in payload if item["id"] == watched_source_job["id"])
+
+        self.assertTrue(job["company_watched_by_user"])
+        self.assertFalse(job["supplemental_candidate"])
+
+    def test_diversified_recommendations_never_backfill_watched_company_jobs(self):
+        jobs = [
+            {"id": 1, "company": "Independent Product Lab", "source": "InternSG"},
+            {"id": 2, "company": "WIZ HOLDINGS PTE LTD", "source": "LinkedIn"},
+        ]
+
+        selected = server.diversified_workbench_recommendations(
+            jobs,
+            {"wiz holdings", "wiz ai"},
+            limit=20,
+        )
+
+        self.assertEqual([job["id"] for job in selected], [1])
 
     def test_company_catalog_marks_current_city_match(self):
         server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
@@ -805,10 +3583,288 @@ class CareerFitTests(TempAppMixin, unittest.TestCase):
 
 
 class AsyncScanTests(TempAppMixin, unittest.TestCase):
+    def test_internsg_fetches_job_details_concurrently_and_preserves_listing_order(self):
+        parsed_jobs = [
+            {
+                "company": f"Company {index}",
+                "position": f"Product Intern {index}",
+                "source": "InternSG",
+                "url": f"https://www.internsg.com/job/product-intern-{index}/",
+                "jd_text": "Listing summary.",
+            }
+            for index in range(6)
+        ]
+        barrier = threading.Barrier(6)
+
+        def fake_http_get(url, **_kwargs):
+            if "/jobs/?" in url:
+                return "listing html"
+            barrier.wait(timeout=1)
+            return f'<div class="isg-detail-container">Details for {url}</div>'
+
+        with mock.patch.object(server, "http_get", side_effect=fake_http_get):
+            with mock.patch.object(server, "parse_internsg_jobs_from_html", return_value=parsed_jobs):
+                jobs, failures = server.fetch_internsg_jobs(6, ["product intern"])
+
+        self.assertEqual(failures, [])
+        self.assertEqual([job["position"] for job in jobs], [f"Product Intern {index}" for index in range(6)])
+        self.assertTrue(all("Details for" in job["jd_text"] for job in jobs))
+
+    def test_company_scan_processes_eight_independent_sites_concurrently(self):
+        with server.get_db() as conn:
+            conn.execute("update watch_companies set status='Dropped' where region='SG'")
+            for index in range(8):
+                conn.execute(
+                    "insert into watch_companies(company, source, url, focus, region, status) values(?, ?, ?, ?, ?, ?)",
+                    (f"Parallel Co {index}", "Company Site", f"https://parallel-{index}.example/", "Product internships", "SG", "Watch"),
+                )
+
+        barrier = threading.Barrier(8)
+
+        def fake_http_get(_url, **_kwargs):
+            barrier.wait(timeout=1)
+            return "<html><body>Careers</body></html>"
+
+        with mock.patch.object(server, "http_get", side_effect=fake_http_get):
+            with mock.patch.object(server, "fetch_company_ats_jobs", return_value=([], [])):
+                jobs, failures = server.fetch_company_site_jobs(20, "SG")
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(failures, [])
+
+    def test_linkedin_rate_limit_failures_collapse_into_one_actionable_summary(self):
+        failures = server.summarize_scan_source_failures(
+            "LinkedIn（含 AI 关键词）",
+            [
+                "LinkedIn detail 1: HTTP Error 429: Too Many Requests",
+                "LinkedIn detail 2: HTTP Error 429: Too Many Requests",
+                "LinkedIn ai product intern: HTTP Error 429: Too Many Requests",
+            ],
+            34,
+        )
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("已保留 34 条列表结果", failures[0])
+
+    def test_linkedin_rate_limit_is_nonblocking_after_base_quota_is_saved(self):
+        error = "LinkedIn 限流：详情或部分关键词请求受限；已保留 24 条列表结果，本轮已停止重复请求。"
+
+        self.assertTrue(server.is_nonblocking_scan_warning("LinkedIn（含 AI 关键词）", error, 24))
+        self.assertFalse(server.is_nonblocking_scan_warning("LinkedIn（含 AI 关键词）", error, 23))
+        self.assertFalse(server.is_nonblocking_scan_warning("JobStreet", error, 24))
+
+    def test_scan_succeeds_when_linkedin_base_quota_survives_optional_rate_limit(self):
+        jobs = [
+            {
+                "company": f"LinkedIn Co {index}",
+                "position": f"Product Intern {index}",
+                "source": "LinkedIn",
+                "url": f"https://www.linkedin.com/jobs/view/{4450000000 + index}",
+                "jd_text": "Singapore product internship with UX research.",
+            }
+            for index in range(server.SOURCE_LIMITS["LinkedIn"])
+        ]
+        fetcher = lambda _limit: (jobs, ["LinkedIn AI query: HTTP Error 429: Too Many Requests"])
+
+        with mock.patch.object(server, "scan_source_definitions", return_value=[("LinkedIn（含 AI 关键词）", fetcher, 42)]):
+            with mock.patch.object(server, "generate_report", return_value={"path": "test"}):
+                result = server.scan_sources(region="SG")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["scan_run"]["sources"][0]["status"], "success")
+
+    def test_linkedin_stops_detail_requests_after_first_rate_limit_but_keeps_listings(self):
+        parsed_jobs = [
+            {"company": f"Company {index}", "position": "Product Intern", "source": "LinkedIn", "url": f"https://www.linkedin.com/jobs/view/{index}", "external_job_id": str(index), "jd_text": "Product internship listing summary."}
+            for index in range(3)
+        ]
+        detail_calls = []
+
+        def fake_http_get(url, **_kwargs):
+            if "jobPosting" in url:
+                detail_calls.append(url)
+                raise RuntimeError("HTTP Error 429: Too Many Requests")
+            return "listing html"
+
+        with mock.patch.object(server, "http_get", side_effect=fake_http_get):
+            with mock.patch.object(server, "parse_linkedin_jobs_from_html", return_value=parsed_jobs):
+                jobs, failures = server.fetch_linkedin_jobs(3, ["product intern"], "SG")
+
+        self.assertEqual(len(jobs), 3)
+        self.assertEqual(len(detail_calls), 1)
+        self.assertEqual(len(failures), 1)
+
+    def test_linkedin_uses_public_job_page_when_detail_api_is_limited(self):
+        parsed_jobs = [
+            {
+                "company": f"Company {index}",
+                "position": "Product Intern",
+                "source": "LinkedIn",
+                "url": f"https://www.linkedin.com/jobs/view/{index}",
+                "external_job_id": str(index),
+                "jd_text": "Product internship listing summary.",
+            }
+            for index in range(3)
+        ]
+        public_detail = """
+          <div class="show-more-less-html__markup show-more-less-html__markup--clamp-after-5">
+            Singapore product internship with user research, Figma prototyping, and AI workflows.
+            Potential for full-time employment after your internship. Monthly internship stipend.
+          </div>
+        """
+
+        def fake_http_get(url, **_kwargs):
+            if "jobPosting" in url:
+                raise RuntimeError("HTTP Error 429: Too Many Requests")
+            if "/jobs/view/" in url:
+                return public_detail
+            return "listing html"
+
+        with mock.patch.object(server, "http_get", side_effect=fake_http_get):
+            with mock.patch.object(server, "parse_linkedin_jobs_from_html", return_value=parsed_jobs):
+                jobs, failures = server.fetch_linkedin_jobs(3, ["product intern"], "SG")
+
+        self.assertEqual(failures, [])
+        self.assertTrue(all("Potential for full-time employment" in job["jd_text"] for job in jobs))
+
+    def test_company_scan_cools_down_recent_limited_sites(self):
+        with server.get_db() as conn:
+            conn.execute("update watch_companies set last_scan_status='limited', last_checked_at=? where region='SG'", (server.now_iso(),))
+
+        with mock.patch.object(server, "http_get") as http_get:
+            jobs, failures = server.fetch_company_site_jobs(20, "SG")
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(failures, [])
+        http_get.assert_not_called()
+
+    def test_company_scan_treats_missing_child_pages_as_empty_not_failure(self):
+        with server.get_db() as conn:
+            conn.execute("update watch_companies set status='Dropped' where region='SG'")
+            conn.execute(
+                "insert into watch_companies(company, source, url, focus, region, status) values(?, ?, ?, ?, ?, ?)",
+                ("Probe Co", "Company Site", "https://probe.example/", "Product internships", "SG", "Watch"),
+            )
+
+        def fake_get(url, **_kwargs):
+            if url == "https://probe.example/":
+                return "<html><body>Company home</body></html>"
+            raise RuntimeError("HTTP Error 404: Not Found")
+
+        with mock.patch.object(server, "http_get", side_effect=fake_get):
+            with mock.patch.object(server, "fetch_company_ats_jobs", return_value=([], [])):
+                jobs, failures = server.fetch_company_site_jobs(10, "SG")
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(failures, [])
+        with server.get_db() as conn:
+            row = conn.execute("select last_scan_status from watch_companies where company='Probe Co'").fetchone()
+        self.assertEqual(row["last_scan_status"], "empty")
+
+    def test_company_scan_keeps_root_page_failure_visible(self):
+        with server.get_db() as conn:
+            conn.execute("update watch_companies set status='Dropped' where region='SG'")
+            conn.execute(
+                "insert into watch_companies(company, source, url, focus, region, status) values(?, ?, ?, ?, ?, ?)",
+                ("Offline Co", "Company Site", "https://offline.example/", "Product internships", "SG", "Watch"),
+            )
+
+        with mock.patch.object(server, "http_get", side_effect=RuntimeError("connection timed out")):
+            jobs, failures = server.fetch_company_site_jobs(10, "SG")
+
+        self.assertEqual(jobs, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("Offline Co", failures[0])
+        with server.get_db() as conn:
+            row = conn.execute("select last_scan_status from watch_companies where company='Offline Co'").fetchone()
+        self.assertEqual(row["last_scan_status"], "failed")
+
+    def test_scan_fetches_sources_in_parallel_and_propagates_user_context(self):
+        barrier = threading.Barrier(8)
+        seen_users = []
+
+        def source_fetcher(label):
+            def fetch(_limit):
+                seen_users.append(server.request_user_id())
+                barrier.wait(timeout=1)
+                return ([{"company": f"{label} Co", "position": "Product Intern", "source": label, "url": f"https://example.com/{label}", "jd_text": "Singapore product internship."}], [])
+            return fetch
+
+        definitions = [
+            (f"Parallel {index}", source_fetcher(f"parallel-{index}"), 1)
+            for index in range(8)
+        ]
+        with server.request_user_context("parallel-user"):
+            server.setup_db()
+            with mock.patch.object(server, "scan_source_definitions", return_value=definitions):
+                result = server.scan_sources(region="SG")
+
+        self.assertEqual(seen_users, ["parallel-user"] * 8)
+        self.assertEqual(result["saved"], 8)
+        self.assertEqual(result["failures"], [])
+
+    def test_indeed_fetch_uses_browser_fallback_after_direct_403(self):
+        fallback_job = {
+            "company": "NLB National Library Board",
+            "position": "Engagement and UX Intern",
+            "source": "Indeed",
+            "url": "https://sg.indeed.com/viewjob?jk=78ff7ee6054aa274",
+            "location": "Hybrid work in Singapore",
+            "jd_text": "Support UX research.",
+        }
+
+        with (
+            mock.patch.object(server, "http_get", side_effect=RuntimeError("HTTP Error 403: Forbidden")),
+            mock.patch.object(server, "fetch_indeed_jobs_with_browser", return_value=([fallback_job], [])) as browser_mock,
+            mock.patch.object(server, "fetch_indeed_jobs_via_google_jobs") as serpapi_mock,
+        ):
+            jobs, failures = server.fetch_indeed_jobs(2, ["ux research intern"], "SG", failure_limit=1)
+
+        self.assertEqual(jobs, [fallback_job])
+        self.assertEqual(failures, [])
+        browser_mock.assert_called_once()
+        serpapi_mock.assert_not_called()
+
+    def test_jobstreet_fetch_uses_public_search_api(self):
+        payload = json.dumps(
+            {
+                "data": [
+                    {
+                        "id": "92606186",
+                        "title": "AI Intern",
+                        "companyName": "Skite Social",
+                        "locations": [{"label": "Central Region"}],
+                        "workTypes": ["Full time"],
+                        "teaser": "Hands-on exposure to AI in real business operations.",
+                    }
+                ]
+            }
+        )
+        calls = []
+
+        def fake_http_get(url, timeout=25, retries=1):
+            calls.append(url)
+            self.assertIn("/api/jobsearch/v5/search", url)
+            return payload
+
+        with mock.patch.object(server, "http_get", side_effect=fake_http_get):
+            jobs, failures = server.fetch_jobstreet_jobs(1, ["ai internship"], "SG")
+
+        self.assertFalse(failures)
+        self.assertEqual(jobs[0]["source"], "JobStreet")
+        self.assertEqual(jobs[0]["url"], "https://sg.jobstreet.com/job/92606186")
+        self.assertEqual(len(calls), 1)
+
     def test_scan_sources_merge_ai_queries_without_ai_visual_rows(self):
         sources = server.expected_scan_sources("SG")
         self.assertIn("LinkedIn（含 AI 关键词）", sources)
         self.assertIn("InternSG（含 AI 关键词）", sources)
+        self.assertIn("Cultjobs", sources)
+        self.assertIn("MyCareersFuture", sources)
+        self.assertIn("Careers@Gov", sources)
+        self.assertIn("Internship.sg", sources)
+        self.assertIn("创业与 AI 机会", sources)
         self.assertNotIn("LinkedIn AI", sources)
         self.assertNotIn("InternSG AI", sources)
 
@@ -830,9 +3886,50 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
 
         self.assertEqual(details["LinkedIn（含 AI 关键词）"], "primary")
         self.assertEqual(details["InternSG（含 AI 关键词）"], "primary")
+        self.assertEqual(details["MyCareersFuture"], "supplemental")
+        self.assertEqual(details["Careers@Gov"], "primary")
+        self.assertEqual(details["Internship.sg"], "supplemental")
+        self.assertEqual(details["Cultjobs"], "primary")
         self.assertEqual(details["Indeed"], "supplemental")
         self.assertEqual(details["JobStreet"], "supplemental")
+        self.assertEqual(details["创业与 AI 机会"], "supplemental")
         self.assertEqual(details["公司官网"], "company")
+
+    def test_scan_overview_merges_legacy_startup_source_name(self):
+        overview = server.scan_overview(
+            {
+                "expected_source_details": [{"source": "创业与 AI 机会", "mode": "supplemental"}],
+                "run": {
+                    "status": "partial",
+                    "sources": [{"source": "Glints / NodeFlair / Startups", "status": "failed", "failure_count": 6}],
+                    "failures_json": [],
+                },
+            }
+        )
+
+        self.assertEqual(len(overview["sources"]), 1)
+        self.assertEqual(overview["sources"][0]["source"], "创业与 AI 机会")
+        self.assertEqual(overview["sources"][0]["failure_count"], 6)
+
+    def test_scan_overview_keeps_active_mycareersfuture_status(self):
+        overview = server.scan_overview(
+            {
+                "expected_source_details": [
+                    {"source": "Cultjobs", "mode": "primary"},
+                    {"source": "MyCareersFuture", "mode": "supplemental"},
+                ],
+                "run": {
+                    "status": "partial",
+                    "sources": [
+                        {"source": "Cultjobs", "status": "success", "saved_count": 4},
+                        {"source": "MyCareersFuture", "status": "failed", "failure_count": 2},
+                    ],
+                    "failures_json": [],
+                },
+            }
+        )
+
+        self.assertEqual([source["source"] for source in overview["sources"]], ["Cultjobs", "MyCareersFuture"])
 
     def test_limited_source_failure_keeps_scan_partial_when_other_sources_save(self):
         def good_source(limit):
@@ -866,6 +3963,57 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(result["saved"], 1)
         source_statuses = {item["source"]: item["status"] for item in result["scan_run"]["sources"]}
         self.assertEqual(source_statuses["Indeed"], "limited")
+
+    def test_scan_reports_new_updated_and_duplicate_counts(self):
+        existing = server.upsert_job(
+            {
+                "company": "Existing Scan Co",
+                "position": "UX Intern",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/4440000100",
+                "jd_text": "Existing Singapore UX internship.",
+            }
+        )
+
+        def fixture_source(limit):
+            new_job = {
+                "company": "New Scan Co",
+                "position": "AI Product Intern",
+                "source": "InternSG",
+                "url": "https://www.internsg.com/job/new-scan-quality/",
+                "jd_text": "Singapore AI product internship.",
+            }
+            return [
+                new_job,
+                dict(new_job),
+                {
+                    "company": "Existing Scan Co",
+                    "position": "UX Intern",
+                    "source": "LinkedIn",
+                    "url": existing["url"],
+                    "jd_text": "Updated Singapore UX internship.",
+                },
+            ], []
+
+        with (
+            mock.patch.object(server, "scan_source_definitions", return_value=[("Fixture", fixture_source, 10)]),
+            mock.patch.object(server, "generate_report"),
+            mock.patch.object(server, "list_ai_jobs", return_value=[]),
+        ):
+            result = server.scan_sources(region="SG")
+
+        self.assertEqual(result["scanned"], 3)
+        self.assertEqual(result["saved"], 2)
+        self.assertEqual(result["new"], 1)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["duplicates"], 1)
+        self.assertEqual(result["scan_run"]["new_count"], 1)
+        self.assertEqual(result["scan_run"]["updated_count"], 1)
+        self.assertEqual(result["scan_run"]["duplicate_count"], 1)
+        source_run = result["scan_run"]["sources"][0]
+        self.assertEqual(source_run["new_count"], 1)
+        self.assertEqual(source_run["updated_count"], 1)
+        self.assertEqual(source_run["duplicate_count"], 1)
 
     def test_async_scan_returns_running_run_and_finishes(self):
         def fake_scan_sources(triggered_by="manual", forced=True, scan_run_id=None, region=None):

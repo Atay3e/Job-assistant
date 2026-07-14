@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -14,14 +15,17 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 import webbrowser
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from functools import lru_cache
 from html import unescape
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, quote_plus, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, quote_plus, urlencode, urljoin, urlparse
 
 try:
     import jwt
@@ -124,7 +128,7 @@ WATCH_COMPANIES = [
     ("Grab", "Company Site", "https://www.grab.careers/", "Product, design, analytics, operations"),
     ("GovTech", "Company Site", "https://www.tech.gov.sg/careers/", "Design, product, digital services"),
     ("DBS", "Company Site", "https://www.dbs.com/careers/default.page", "Graduate, innovation, product, UX"),
-    ("PDD", "Company Site", "https://careers.pinduoduo.com/", "Operations, product, platform roles"),
+    ("PDD", "Company Site", "https://careers.pddglobalhr.com/campus/intern", "Internship, product, platform and AI roles; require explicit Singapore location"),
     ("Tencent", "Company Site", "https://careers.tencent.com/en-us/home.html", "Product, design, technology"),
 ]
 
@@ -349,6 +353,132 @@ COMPANY_CATALOG = [
         "language_signal": "Chinese-friendly likely",
         "recommend_reason": "旅游平台和跨境用户场景适合讲多语言体验、服务流程和增长。",
         "priority": 79,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Ant International",
+        "source": "Company Site",
+        "url": "https://www.ant-intl.com/en/job-search",
+        "focus": "Payments, product operations, growth, risk, customer experience",
+        "company_type": "Fintech / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "Fintech", "出海"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "支付和跨境商业场景强，适合产品运营、增长和风控相关实习；中文背景可能是加分项。",
+        "priority": 86,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Alibaba Cloud Singapore",
+        "source": "Company Site",
+        "url": "https://www.alibabagroup.com/careers",
+        "focus": "Cloud, AI, product operations, ecosystem marketing, customer success",
+        "company_type": "Cloud / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "AI", "出海"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "云与企业服务出海场景，适合讲 AI 产品、B2B 用户和区域市场理解。",
+        "priority": 84,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Lark",
+        "source": "Company Site",
+        "url": "https://www.larksuite.com/site/job",
+        "focus": "B2B SaaS, product, customer success, UX research, APAC growth",
+        "company_type": "B2B SaaS / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "B2B SaaS", "产品"],
+        "language_signal": "Chinese-friendly likely",
+        "recommend_reason": "协作工具和 APAC 客户场景清晰，适合 AI product、UX research 和 customer success。",
+        "priority": 85,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Huawei Singapore",
+        "source": "Company Site",
+        "url": "https://career.huawei.com/reccampportal/portal5/index.html",
+        "focus": "Cloud, AI, telecom, product marketing, solution operations",
+        "company_type": "Telecom / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "AI", "本地企业客户"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "企业科技和区域业务场景多，适合关注云、AI、解决方案和产品运营岗位。",
+        "priority": 82,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Xiaomi Singapore",
+        "source": "Company Site",
+        "url": "https://career.mi.com/",
+        "focus": "AIoT, e-commerce, marketing, product operations, retail experience",
+        "company_type": "Consumer Tech / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "消费科技", "出海"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "消费科技和 AIoT 出海场景，适合产品运营、市场和用户体验相关机会。",
+        "priority": 78,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "OPPO Singapore",
+        "source": "Company Site",
+        "url": "https://careers.oppo.com/",
+        "focus": "Consumer technology, retail operations, marketing, product experience",
+        "company_type": "Consumer Tech / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "消费科技"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "适合关注手机生态、门店体验、市场和区域运营相关机会。",
+        "priority": 75,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "vivo Singapore",
+        "source": "Company Site",
+        "url": "https://www.vivo.com/sg/about-vivo/career/jobs",
+        "focus": "Consumer technology, marketing, retail operations, product experience",
+        "company_type": "Consumer Tech / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "消费科技"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "手机和消费电子场景，适合市场、运营、用户体验和渠道相关机会。",
+        "priority": 74,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "SHEIN Singapore",
+        "source": "Company Site",
+        "url": "https://careers.shein.com/",
+        "focus": "E-commerce, merchandising, logistics, growth, content, operations",
+        "company_type": "E-commerce / Greater China",
+        "city_tags": ["Singapore"],
+        "tags": ["中文友好概率较高", "电商", "出海"],
+        "language_signal": "Chinese-friendly possible",
+        "recommend_reason": "跨境电商和供应链场景强，适合增长、内容、运营和体验相关岗位。",
+        "priority": 80,
+        "default_watch": False,
+    },
+    {
+        "region": "SG",
+        "company": "Singtel",
+        "source": "Company Site",
+        "url": "https://www.singtel.com/about-us/careers",
+        "focus": "Internships, digital product, data, AI, customer experience, NCS/Nxera ecosystem",
+        "company_type": "Telco / Local Anchor",
+        "city_tags": ["Singapore"],
+        "tags": ["本地标杆", "实习", "AI"],
+        "language_signal": "English first",
+        "recommend_reason": "新加坡本地大型雇主，实习、数据、数字化和 NCS 生态机会较多。",
+        "priority": 86,
         "default_watch": False,
     },
     {
@@ -1131,6 +1261,9 @@ TARGET_QUERIES = [
     "ai ux intern",
     "generative ai intern",
     "ux design intern",
+    "internship with conversion Singapore",
+    "graduate internship Singapore sponsorship",
+    "Mandarin Chinese product intern Singapore",
     "product design intern",
     "service design intern",
     "user research intern",
@@ -1155,18 +1288,73 @@ AI_TARGET_QUERIES = [
     "automation intern",
 ]
 
+STARTUP_OPPORTUNITY_QUERIES = [
+    "startup intern",
+    "ai startup intern",
+    "venture builder intern",
+    "founders office intern",
+    "startup innovation intern",
+]
+
+STARTUP_OPPORTUNITY_SIGNALS = [
+    "startup",
+    "start-up",
+    "venture",
+    "founder",
+    "innovation",
+    "sginnovate",
+    "ai",
+    "artificial intelligence",
+    "automation",
+    "agentic",
+    "fintech",
+    "incubator",
+    "accelerator",
+]
+
 SOURCE_LIMITS = {
     "LinkedIn": 24,
     "InternSG": 24,
     "Indeed": 12,
     "JobStreet": 24,
+    "Watched Companies": 24,
     "Company Site": 80,
     "Google Jobs": 24,
+    "MyCareersFuture": 18,
+    "Careers@Gov": 30,
+    "Internship.sg": 24,
+    "Cultjobs": 18,
+    "Startup Channels": 18,
+    "AI Startup ATS": 52,
     "LinkedIn AI": 18,
     "InternSG AI": 12,
     "Indeed AI": 8,
     "JobStreet AI": 12,
 }
+
+SG_AI_STARTUP_ATS_BOARDS = [
+    ("Temus", "https://job-boards.greenhouse.io/temus", "AI, product, UX and digital transformation internships"),
+    ("Workato", "https://job-boards.greenhouse.io/workato", "AI integration, product analytics and marketing internships"),
+    ("k-ID", "https://jobs.ashbyhq.com/k-ID", "Product, HCI, UX, engineering and operations internships"),
+    ("Motion Ventures", "https://job-boards.greenhouse.io/motionventures", "Venture, startup ecosystem and strategy internships"),
+    ("Menlo", "https://jobs.ashbyhq.com/menlo", "Applied AI, product engineering and research fellowships"),
+    ("Manus AI", "https://jobs.ashbyhq.com/manusai", "AI product, growth and go-to-market internships"),
+    ("Simular", "https://jobs.ashbyhq.com/Simular", "AI startup operations and product internships"),
+    ("Plaud", "https://jobs.ashbyhq.com/Plaud", "AI hardware, product and global growth internships"),
+    ("Bifrost AI", "https://jobs.ashbyhq.com/Bifrost", "Physical AI, product and strategy internships"),
+    ("Dexmate", "https://jobs.ashbyhq.com/dexmate", "Physical AI and robotics internships"),
+    ("Flagright", "https://jobs.ashbyhq.com/flagright.com", "Fintech AI, product and marketing internships"),
+    ("Venti Technologies", "https://jobs.ashbyhq.com/GoVenti", "Autonomous systems, AI and operations internships"),
+    ("Coinhako", "https://jobs.ashbyhq.com/Coinhako", "Singapore fintech and operations internships"),
+    ("ShopBack", "https://jobs.lever.co/shopback-2", "Data, product, growth and commerce internships"),
+    ("Carousell Group", "https://careers.smartrecruiters.com/carousellgroup", "Marketplace, operations, product and graduate opportunities"),
+    ("YouTrip", "https://apply.workable.com/youtrip", "Fintech product, community, growth and business internships"),
+    ("StraitsX", "https://job-boards.greenhouse.io/straitsx", "Data and AI, product and fintech engineering internships"),
+    ("MoneySmart", "https://job-boards.greenhouse.io/moneysmart", "Product design, UX and fintech internships"),
+    ("Razer", "https://razer.wd3.myworkdayjobs.com/Careers", "AI, gaming, community, product and operations internships"),
+    ("Circles", "https://circles.wd103.myworkdayjobs.com/en-US/Circles", "AI product, digital telco, growth and strategy early-career roles"),
+    ("Wise", "https://careers.smartrecruiters.com/Wise", "Fintech analytics, product, operations and marketing internships"),
+]
 
 EMPLOYMENT_PRIORITY_VALUES = {"internship", "full_time", "both", "unspecified"}
 EMPLOYMENT_TYPE_VALUES = {"Internship", "Full-time", "Graduate", "Contract", "Unknown"}
@@ -1205,6 +1393,79 @@ EMPLOYMENT_PRIORITY_OPTIONS = [
     {"value": "both", "label": "都考虑"},
     {"value": "unspecified", "label": "暂不确定"},
 ]
+CAREER_GOAL_VALUES = {"sg_internship_to_fulltime", "experience_first", "full_time_sg", "explore"}
+PRIORITY_LEVEL_VALUES = {"high", "medium", "low", "unspecified"}
+LANGUAGE_PREFERENCE_VALUES = {"chinese_friendly", "bilingual", "english_ok", "unspecified"}
+COMPANY_GROUP_VALUES = {
+    "greater_china",
+    "sg_anchor",
+    "ai_startup",
+    "product_design",
+    "fintech",
+    "service_brand",
+}
+CAREER_GOAL_OPTIONS = [
+    {"value": "sg_internship_to_fulltime", "label": "实习到留新加坡"},
+    {"value": "experience_first", "label": "先累积经验"},
+    {"value": "full_time_sg", "label": "直接找正式工"},
+    {"value": "explore", "label": "先探索"},
+]
+PRIORITY_LEVEL_OPTIONS = [
+    {"value": "high", "label": "优先"},
+    {"value": "medium", "label": "加权"},
+    {"value": "low", "label": "不强求"},
+    {"value": "unspecified", "label": "暂不确定"},
+]
+LANGUAGE_PREFERENCE_OPTIONS = [
+    {"value": "chinese_friendly", "label": "中文友好优先"},
+    {"value": "bilingual", "label": "中英双语都可"},
+    {"value": "english_ok", "label": "英文为主也可以"},
+    {"value": "unspecified", "label": "暂不确定"},
+]
+USER_JOB_TAG_OPTIONS = [
+    {"value": "internship", "label": "实习", "category": "岗位类型"},
+    {"value": "graduate", "label": "Graduate", "category": "岗位类型"},
+    {"value": "full_time", "label": "正式工", "category": "岗位类型"},
+    {"value": "contract", "label": "合同/兼职", "category": "岗位类型"},
+    {"value": "conversion_strong", "label": "明确可转正", "category": "留新路径"},
+    {"value": "conversion_possible", "label": "可能可转正", "category": "留新路径"},
+    {"value": "conversion_none", "label": "明确无转正", "category": "留新路径"},
+    {"value": "visa_possible", "label": "工签可能", "category": "留新路径"},
+    {"value": "visa_unclear", "label": "工签待确认", "category": "留新路径"},
+    {"value": "visa_unlikely", "label": "工签风险", "category": "留新路径"},
+    {"value": "chinese_friendly", "label": "中文友好可能", "category": "语言环境"},
+    {"value": "english_first", "label": "英文为主", "category": "语言环境"},
+    {"value": "company_greater_china", "label": "大中华背景", "category": "公司类型"},
+    {"value": "company_sg_anchor", "label": "新加坡本地大厂", "category": "公司类型"},
+    {"value": "company_ai_startup", "label": "AI/高潜力初创", "category": "公司类型"},
+    {"value": "company_product_design", "label": "产品/设计型公司", "category": "公司类型"},
+    {"value": "company_fintech", "label": "Fintech", "category": "公司类型"},
+    {"value": "company_service_brand", "label": "服务体验品牌", "category": "公司类型"},
+    {"value": "ai_related", "label": "AI 相关", "category": "方向标签"},
+    {"value": "product_related", "label": "Product", "category": "方向标签"},
+    {"value": "ux_related", "label": "UX / Research", "category": "方向标签"},
+    {"value": "operations_related", "label": "Ops / Project", "category": "方向标签"},
+    {"value": "marketing_related", "label": "Marketing / Content", "category": "方向标签"},
+    {"value": "salary_match", "label": "薪资匹配", "category": "薪资"},
+    {"value": "salary_unknown", "label": "薪资未知", "category": "薪资"},
+    {"value": "salary_low", "label": "薪资偏低", "category": "薪资"},
+    {"value": "source_official", "label": "官网 / ATS", "category": "来源"},
+    {"value": "source_linkedin", "label": "LinkedIn", "category": "来源"},
+    {"value": "source_internsg", "label": "InternSG", "category": "来源"},
+    {"value": "source_internship_sg", "label": "Internship.sg", "category": "来源"},
+    {"value": "source_jobstreet", "label": "JobStreet", "category": "来源"},
+    {"value": "source_indeed", "label": "Indeed", "category": "来源"},
+    {"value": "source_mycareersfuture", "label": "MyCareersFuture", "category": "来源"},
+    {"value": "source_cultjobs", "label": "Cultjobs 创意岗位", "category": "来源"},
+    {"value": "source_startup", "label": "创业与 AI 机会", "category": "来源"},
+    {"value": "source_google_jobs", "label": "Google Jobs", "category": "来源"},
+    {"value": "fresh_today", "label": "今天新发现", "category": "新鲜度"},
+    {"value": "fresh_recent", "label": "近期岗位", "category": "新鲜度"},
+    {"value": "fresh_stale", "label": "较早岗位", "category": "新鲜度"},
+    {"value": "high_experience", "label": "年限偏高", "category": "风险"},
+]
+USER_JOB_TAG_VALUES = {item["value"] for item in USER_JOB_TAG_OPTIONS}
+USER_JOB_TAG_LABELS = {item["value"]: item["label"] for item in USER_JOB_TAG_OPTIONS}
 SALARY_PERIOD_OPTIONS = [
     {"value": "monthly", "label": "月薪"},
     {"value": "yearly", "label": "年薪"},
@@ -1274,19 +1535,34 @@ SALARY_BAND_OPTIONS = {
 SCAN_SOURCE_MODES = {
     "LinkedIn（含 AI 关键词）": "primary",
     "InternSG（含 AI 关键词）": "primary",
+    "MyCareersFuture": "supplemental",
+    "Careers@Gov": "primary",
+    "Internship.sg": "supplemental",
+    "Cultjobs": "primary",
+    "新加坡科技与 AI ATS": "primary",
     "Google Jobs": "primary",
     "Indeed": "supplemental",
     "JobStreet": "supplemental",
+    "关注公司公开来源": "supplemental",
+    "创业与 AI 机会": "supplemental",
     "公司官网": "company",
     "JobsDB": "primary",
     "LinkedIn": "primary",
     "Mainland Public Search": "primary",
 }
 
+SCAN_SOURCE_NAME_ALIASES = {
+    "Glints / NodeFlair / Startups": "创业与 AI 机会",
+    "新加坡 AI 初创 ATS": "新加坡科技与 AI ATS",
+}
+RETIRED_AUTO_SCAN_SOURCES: set[str] = set()
+
 COMPANY_ALIAS_OVERRIDES = {
     "advance.ai": ["ADVANCE.AI", "Advance AI", "Advance Intelligence Group", "advanceai"],
     "ai singapore": ["AI Singapore", "AISG"],
     "aichat": ["AiChat", "AI Chat"],
+    "alibaba cloud singapore": ["Alibaba Cloud Singapore", "Alibaba", "Alibaba Cloud", "AliCloud"],
+    "ant international": ["Ant International", "Ant Group", "Alipay+", "Alipay Labs", "Ant"],
     "bytedance": ["ByteDance", "TikTok"],
     "changi airport group": ["Changi Airport Group", "Changi Airport", "CAG"],
     "dbs": ["DBS", "DBS Bank"],
@@ -1294,18 +1570,25 @@ COMPANY_ALIAS_OVERRIDES = {
     "grab": ["Grab", "Grab Singapore"],
     "horizon labs": ["Horizon Labs", "Horizon Labs SG"],
     "hypotenuse ai": ["Hypotenuse AI", "Hypotenuse"],
+    "huawei singapore": ["Huawei Singapore", "Huawei", "Huawei Technologies"],
     "ikea singapore": ["IKEA Singapore", "IKEA"],
     "k-id": ["k-ID", "k ID", "kID"],
     "lazada": ["Lazada", "Lazada Singapore"],
     "muji singapore": ["MUJI Singapore", "MUJI"],
+    "oppo singapore": ["OPPO Singapore", "OPPO", "Sinoppel"],
     "patsnap": ["PatSnap", "Patsnap"],
     "pdd": ["PDD", "Pinduoduo", "Temu"],
     "pop mart singapore": ["POP MART Singapore", "POP MART", "Popmart"],
     "sea": ["Sea", "Sea Group", "Shopee", "Garena"],
     "shopee": ["Shopee", "Shopee Singapore", "SeaMoney"],
+    "shein singapore": ["SHEIN Singapore", "SHEIN", "SHEIN Group"],
+    "singtel": ["Singtel", "Singtel Group", "Singapore Telecommunications"],
     "tencent singapore": ["Tencent Singapore", "Tencent"],
     "trip.com group": ["Trip.com Group", "Trip.com", "Ctrip"],
+    "vivo singapore": ["vivo Singapore", "vivo"],
     "wiz.ai": ["WIZ.AI", "WIZ AI", "WIZ HOLDINGS", "WIZ HOLDINGS PTE LTD", "Wiz Holdings"],
+    "xiaomi singapore": ["Xiaomi Singapore", "Xiaomi", "Xiaomi Technology"],
+    "lark": ["Lark", "Lark Suite", "Lark APAC", "ByteDance Lark"],
     "flowmingo ai": ["Flowmingo AI", "Flowmingo", "Featurii"],
     "x0pa ai": ["X0PA AI", "X0PA"],
     "visenze": ["ViSenze", "ViSenze AI", "Rezolve Ai"],
@@ -1346,9 +1629,16 @@ COMPANY_ALIAS_OVERRIDES = {
 COMPANY_SCAN_ROLE_PATTERN = re.compile(
     r"\b(intern|internship|graduate|associate|junior|entry level|ux|ui|user research|design|designer|"
     r"product|operations|analyst|content|marketing|growth|customer success|project|programme|program|ai|"
-    r"machine learning|data|research|service)\b",
+    r"machine learning|data|research|service|software|engineer|engineering|developer|development)\b",
     flags=re.I,
 )
+COMPANY_SCAN_TITLE_ROLE_PATTERN = re.compile(
+    r"\b(intern|internship|graduate|trainee|apprentice|fellow|manager|designer|engineer|developer|analyst|researcher|"
+    r"scientist|specialist|associate|executive|coordinator|assistant|consultant|architect|officer|director|lead|"
+    r"head|owner|sales|operations|recruiter|technician|support|planner|controller|producer|editor|writer|strategist)\b",
+    flags=re.I,
+)
+COMPANIES_REQUIRE_EXPLICIT_LOCATION = {"pdd"}
 
 COMPANY_CAREER_LINK_PATTERN = re.compile(
     r"(career|job|jobs|opening|openings|join-us|join us|position|positions|vacanc|work-with-us|greenhouse|lever|ashby|workday|smartrecruiters|workable|bamboohr|careers-page|surgeahead)",
@@ -1456,7 +1746,7 @@ CAREER_DIRECTIONS = [
     {
         "id": "ai-product",
         "label": "AI Product",
-        "keywords": ["ai product", "llm", "generative ai", "ai agent", "chatbot", "prompt", "automation", "workflow"],
+        "keywords": ["ai", "genai", "ai product", "llm", "generative ai", "ai agent", "chatbot", "prompt", "automation", "workflow"],
         "evidence": ["ai-assisted", "prompt", "workflow automation", "jd/capability matching", "scenario exploration"],
         "gaps": ["LLM evaluation metrics", "AI product launch evidence", "technical product specs"],
     },
@@ -1496,6 +1786,45 @@ CAREER_DIRECTIONS = [
         "gaps": ["conversion metrics", "campaign results", "audience segmentation evidence"],
     },
 ]
+
+DIRECTION_GENERIC_KEYWORDS = {
+    "ai-product": {"ai", "genai", "generative ai", "llm", "automation", "workflow"},
+    "ux-product-design": {"prototype"},
+    "user-research": {"interview", "survey", "insight"},
+    "service-design": {"healthcare", "public service"},
+    "product-ops": {"operations", "process", "workflow"},
+    "growth-content": {"growth", "content", "community", "conversion"},
+}
+
+NON_TARGET_FUNCTION_TITLE_PATTERN = re.compile(
+    r"\b(finance|financial|accounting|accountant|audit|tax|legal|counsel|compliance|risk|"
+    r"human resources|hr|people|talent|recruit(?:er|ing)?|procurement|supply chain|"
+    r"investment|portfolio|pre[- ]?sales|sales|business development|account management|"
+    r"partner success|customer success|data science|data scientist|data engineer(?:ing)?|"
+    r"machine learning engineer|ml engineer|ai engineer|artificial intelligence engineer|"
+    r"software engineer(?:ing)?|software developer|back[- ]?end|front[- ]?end|full[- ]?stack|"
+    r"devops|site reliability|sre|cloud engineer|platform engineer|security engineer|"
+    r"cybersecurity|quantitative|robotics engineer|robot learning|ai\s*/\s*data|data intern|"
+    r"autonomous vehicle|integration\s*(?:&|and)\s*validation|software tools|"
+    r"engineering intern(?:ship)?|repair|maintenance)\b",
+    flags=re.I,
+)
+
+PURE_TECHNICAL_TITLE_PATTERN = re.compile(
+    r"\b(data science|data scientist|data engineer(?:ing)?|machine learning engineer|ml engineer|"
+    r"ai engineer|artificial intelligence engineer|software engineer(?:ing)?|software developer|"
+    r"back[- ]?end|front[- ]?end|full[- ]?stack|devops|site reliability|sre|cloud engineer|"
+    r"platform engineer|security engineer|cybersecurity|quantitative|robotics engineer|"
+    r"robot learning|ai\s*/\s*data|data intern|autonomous vehicle|"
+    r"integration\s*(?:&|and)\s*validation|software tools|engineering intern(?:ship)?)\b",
+    flags=re.I,
+)
+
+PRODUCT_FACING_TITLE_PATTERN = re.compile(
+    r"\b(product|ux|ui|user research|design|research|growth|content|marketing|operations|"
+    r"project|program(?:me)?|strategy|innovation)\b",
+    flags=re.I,
+)
 
 DIRECTION_CATEGORIES = {
     "ai-product": "AI 与产品",
@@ -2136,6 +2465,11 @@ def setup_db() -> None:
                 salary_period text,
                 salary_text text,
                 salary_fit text not null default 'unknown',
+                conversion_signal text not null default 'unknown',
+                visa_sponsorship_signal text not null default 'unknown',
+                language_signal text not null default 'unknown',
+                pathway_score real not null default 0,
+                pathway_evidence_json text not null default '[]',
                 jd_text text not null,
                 jd_hash text not null,
                 score real not null default 0,
@@ -2147,6 +2481,8 @@ def setup_db() -> None:
                 batch_date text,
                 recommended_date text,
                 applied_date text,
+                last_followup_at text,
+                followup_count integer not null default 0,
                 last_checked_at text not null,
                 notion_page_id text,
                 resume_path text,
@@ -2205,6 +2541,9 @@ def setup_db() -> None:
                 forced integer not null default 0,
                 scanned_count integer not null default 0,
                 saved_count integer not null default 0,
+                new_count integer not null default 0,
+                updated_count integer not null default 0,
+                duplicate_count integer not null default 0,
                 recommended_count integer not null default 0,
                 ai_recommended_count integer not null default 0,
                 failures_json text not null default '[]',
@@ -2221,6 +2560,9 @@ def setup_db() -> None:
                 status text not null default 'running',
                 scanned_count integer not null default 0,
                 saved_count integer not null default 0,
+                new_count integer not null default 0,
+                updated_count integer not null default 0,
+                duplicate_count integer not null default 0,
                 failure_count integer not null default 0,
                 failures_json text not null default '[]',
                 created_at text not null,
@@ -2275,6 +2617,13 @@ def setup_db() -> None:
                 ensure_column(conn, "jobs", "salary_period", "text")
                 ensure_column(conn, "jobs", "salary_text", "text")
                 ensure_column(conn, "jobs", "salary_fit", "text not null default 'unknown'")
+                ensure_column(conn, "jobs", "conversion_signal", "text not null default 'unknown'")
+                ensure_column(conn, "jobs", "visa_sponsorship_signal", "text not null default 'unknown'")
+                ensure_column(conn, "jobs", "language_signal", "text not null default 'unknown'")
+                ensure_column(conn, "jobs", "pathway_score", "real not null default 0")
+                ensure_column(conn, "jobs", "pathway_evidence_json", "text not null default '[]'")
+                ensure_column(conn, "jobs", "last_followup_at", "text")
+                ensure_column(conn, "jobs", "followup_count", "integer not null default 0")
                 ensure_column(conn, "applications", "assist_payload_path", "text")
                 ensure_column(conn, "applications", "assist_result_path", "text")
                 ensure_column(conn, "applications", "assist_status", "text")
@@ -2282,6 +2631,12 @@ def setup_db() -> None:
                 ensure_column(conn, "scan_runs", "region", "text not null default 'SG'")
                 ensure_column(conn, "scan_runs", "city", "text")
                 ensure_column(conn, "scan_runs", "source_region", "text")
+                ensure_column(conn, "scan_runs", "new_count", "integer not null default 0")
+                ensure_column(conn, "scan_runs", "updated_count", "integer not null default 0")
+                ensure_column(conn, "scan_runs", "duplicate_count", "integer not null default 0")
+                ensure_column(conn, "scan_source_runs", "new_count", "integer not null default 0")
+                ensure_column(conn, "scan_source_runs", "updated_count", "integer not null default 0")
+                ensure_column(conn, "scan_source_runs", "duplicate_count", "integer not null default 0")
                 migrate_watch_companies_table(conn)
                 seed_default_watch_companies(conn)
                 backfill_job_metadata(conn)
@@ -2303,6 +2658,7 @@ def row_to_dict(row: sqlite3.Row) -> dict:
         "exclude_keywords_json",
         "city_tags_json",
         "aliases_json",
+        "pathway_evidence_json",
     ]:
         if key in out:
             try:
@@ -2341,6 +2697,21 @@ def http_get(url: str, timeout: int = 25, retries: int = 1) -> str:
             if attempt < retries:
                 time.sleep(0.8 * (attempt + 1))
     raise last_exc or RuntimeError(f"Failed to fetch {url}")
+
+
+def http_post_json(url: str, payload: dict, timeout: int = 25) -> dict:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", errors="ignore"))
 
 
 def absolute_url(base: str, href: str) -> str:
@@ -2539,6 +2910,23 @@ def default_region_context(region: str) -> dict:
         "target_directions": list(defaults["target_directions"]),
         "job_types": list(defaults["job_types"]),
         "employment_priority": defaults["employment_priority"],
+        "career_goal": "sg_internship_to_fulltime" if code == "SG" else "experience_first",
+        "sponsorship_priority": "high" if code == "SG" else "medium",
+        "language_preference": "chinese_friendly" if code == "SG" else "bilingual",
+        "conversion_priority": "high" if code == "SG" else "medium",
+        "preferred_company_groups": ["greater_china", "ai_startup", "sg_anchor"] if code == "SG" else [],
+        "preferred_job_tags": [
+            "internship",
+            "conversion_strong",
+            "conversion_possible",
+            "visa_possible",
+            "chinese_friendly",
+            "company_greater_china",
+            "company_ai_startup",
+            "ai_related",
+            "product_related",
+        ] if code == "SG" else [],
+        "muted_job_tags": ["visa_unlikely", "conversion_none", "high_experience"] if code == "SG" else [],
         "salary_currency": REGION_CURRENCIES.get(code, ""),
         "salary_period": "monthly",
         "salary_min": None,
@@ -2581,6 +2969,13 @@ def merge_user_context(stored: dict) -> dict:
                 "target_directions",
                 "job_types",
                 "employment_priority",
+                "career_goal",
+                "sponsorship_priority",
+                "language_preference",
+                "conversion_priority",
+                "preferred_company_groups",
+                "preferred_job_tags",
+                "muted_job_tags",
                 "salary_currency",
                 "salary_period",
                 "salary_min",
@@ -2621,6 +3016,16 @@ def save_user_context(payload: dict) -> dict:
     if "employment_priority" in updates:
         priority = str(updates.get("employment_priority") or "unspecified").strip()
         target["employment_priority"] = priority if priority in EMPLOYMENT_PRIORITY_VALUES else "unspecified"
+    if "career_goal" in updates:
+        goal = str(updates.get("career_goal") or "sg_internship_to_fulltime").strip()
+        target["career_goal"] = goal if goal in CAREER_GOAL_VALUES else "sg_internship_to_fulltime"
+    for key in ["sponsorship_priority", "conversion_priority"]:
+        if key in updates:
+            value = str(updates.get(key) or "unspecified").strip()
+            target[key] = value if value in PRIORITY_LEVEL_VALUES else "unspecified"
+    if "language_preference" in updates:
+        value = str(updates.get("language_preference") or "unspecified").strip()
+        target["language_preference"] = value if value in LANGUAGE_PREFERENCE_VALUES else "unspecified"
     if "salary_currency" in updates:
         target["salary_currency"] = str(updates.get("salary_currency") or "").strip().upper()
     if "salary_period" in updates:
@@ -2636,12 +3041,17 @@ def save_user_context(payload: dict) -> dict:
                     target[key] = max(0.0, float(raw_value))
                 except ValueError:
                     target[key] = None
-    for key in ["target_directions", "job_types", "company_focus", "exclude_keywords"]:
+    for key in ["target_directions", "job_types", "company_focus", "exclude_keywords", "preferred_company_groups", "preferred_job_tags", "muted_job_tags"]:
         if key in updates:
             values = updates.get(key) or []
             if isinstance(values, str):
                 values = [item.strip() for item in re.split(r"[,，\n]+", values) if item.strip()]
-            target[key] = [str(item).strip() for item in values if str(item).strip()]
+            cleaned = [str(item).strip() for item in values if str(item).strip()]
+            if key == "preferred_company_groups":
+                cleaned = [item for item in cleaned if item in COMPANY_GROUP_VALUES]
+            elif key in {"preferred_job_tags", "muted_job_tags"}:
+                cleaned = [item for item in cleaned if item in USER_JOB_TAG_VALUES]
+            target[key] = cleaned
     if "onboarding_completed" in payload:
         context["onboarding_completed"] = bool(payload.get("onboarding_completed"))
     if "resume_analyzed" in payload:
@@ -2710,6 +3120,18 @@ def profile_options_payload(region: str | None = None) -> dict:
         "regions": [{"value": key, "label": value["label"]} for key, value in REGION_CONFIGS.items()],
         "work_authorisation_options": WORK_AUTH_OPTIONS.get(code, WORK_AUTH_OPTIONS["SG"]),
         "employment_priority_options": EMPLOYMENT_PRIORITY_OPTIONS,
+        "career_goal_options": CAREER_GOAL_OPTIONS,
+        "priority_level_options": PRIORITY_LEVEL_OPTIONS,
+        "language_preference_options": LANGUAGE_PREFERENCE_OPTIONS,
+        "job_tag_options": USER_JOB_TAG_OPTIONS,
+        "company_group_options": [
+            {"value": "greater_china", "label": "大中华/中文友好"},
+            {"value": "sg_anchor", "label": "新加坡本地大厂"},
+            {"value": "ai_startup", "label": "AI/高潜力初创"},
+            {"value": "product_design", "label": "产品/设计"},
+            {"value": "fintech", "label": "Fintech"},
+            {"value": "service_brand", "label": "服务体验品牌"},
+        ],
         "direction_options": [
             {"value": item["id"], "label": item["label"], "category": DIRECTION_CATEGORIES.get(item["id"], "其他方向")}
             for item in CAREER_DIRECTIONS
@@ -2736,8 +3158,15 @@ def json_list(value) -> list[str]:
     return []
 
 
+@lru_cache(maxsize=4096)
+def clean_company_name(value: str) -> str:
+    cleaned = clean_text(value or "")
+    return re.sub(r"\s+featured\s*$", "", cleaned, flags=re.I).strip()
+
+
+@lru_cache(maxsize=4096)
 def normalize_company_phrase(value: str) -> str:
-    lowered = (value or "").lower().replace("&", " and ")
+    lowered = clean_company_name(value).lower().replace("&", " and ")
     lowered = re.sub(r"\b(private limited|pte ltd|pte\.?\s*ltd\.?|limited|ltd|inc|corp|corporation|co)\b\.?", " ", lowered)
     lowered = re.sub(r"[^a-z0-9]+", " ", lowered)
     return re.sub(r"\s+", " ", lowered).strip()
@@ -2776,6 +3205,77 @@ def company_match_terms(company: str, item: dict | None = None) -> list[str]:
 def company_text_has_term(text: str, term: str) -> bool:
     normalized = f" {normalize_company_phrase(text)} "
     return f" {term} " in normalized
+
+
+def normalize_job_title_for_dedupe(value: str) -> str:
+    lowered = (value or "").lower().replace("&", " and ")
+    lowered = re.sub(
+        r"\((?:\s*(?:ai|llm|rag|genai|generative ai|machine learning)\s*[/,+&-]?\s*)+\)",
+        " ",
+        lowered,
+    )
+    lowered = re.sub(r"[^a-z0-9]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+COMPANY_DEDUPE_ALIASES = {
+    "cpf board": "central provident fund board",
+    "cyber security agency of singapore": "cyber security agency",
+    "csa": "cyber security agency",
+    "housing and development board": "hdb",
+}
+
+
+def job_dedupe_key(job: dict) -> str:
+    company = normalize_company_phrase(job.get("company") or "")
+    company = COMPANY_DEDUPE_ALIASES.get(company, company)
+    position = normalize_job_title_for_dedupe(job.get("position") or "")
+    region = active_region_code(job.get("region") or job.get("source_region") or None)
+    city = normalize_company_phrase(job.get("city") or job.get("location") or "")
+    generic_companies = {
+        "",
+        "unknown company",
+        "linkedin company",
+        "jobstreet company",
+        "indeed company",
+        "internsg company",
+        "google jobs",
+        "glints nodeflair startups",
+    }
+    if company in generic_companies or len(position) < 4:
+        return f"url:{job.get('url') or job.get('id') or ''}"
+    return "|".join([region, city, company, position])
+
+
+def collapse_duplicate_job_groups(jobs: list[dict]) -> list[dict]:
+    collapsed: list[dict] = []
+    by_key: dict[str, dict] = {}
+    for job in jobs:
+        key = job_dedupe_key(job)
+        existing = by_key.get(key)
+        if existing is None:
+            item = dict(job)
+            item["dedupe_key"] = key
+            item["duplicate_count"] = 0
+            item["alternate_links"] = []
+            item["alternate_sources"] = []
+            item["source_count"] = 1
+            collapsed.append(item)
+            by_key[key] = item
+            continue
+        url = job.get("url") or ""
+        if url and url != existing.get("url") and not any(link.get("url") == url for link in existing["alternate_links"]):
+            existing["alternate_links"].append({
+                "id": job.get("id"),
+                "source": job.get("source") or "其它来源",
+                "url": url,
+            })
+        source = job.get("source") or "其它来源"
+        if source != existing.get("source") and source not in existing["alternate_sources"]:
+            existing["alternate_sources"].append(source)
+        existing["duplicate_count"] += 1
+        existing["source_count"] = 1 + len(existing["alternate_sources"])
+    return collapsed
 
 
 def match_job_to_company(job: dict, company: str, item: dict | None = None) -> tuple[bool, str]:
@@ -2823,6 +3323,19 @@ def company_item_from_row(row: dict) -> dict:
     out = dict(row)
     out["city_tags"] = out.get("city_tags") or out.get("city_tags_json") or []
     out["aliases"] = company_alias_values(out.get("company") or "", out)
+    catalog_item = next(
+        (
+            dict(item)
+            for item in COMPANY_CATALOG
+            if item.get("region") == out.get("region") and item.get("company", "").lower() == str(out.get("company") or "").lower()
+        ),
+        None,
+    )
+    if catalog_item:
+        for key in ["tags", "recommend_reason", "language_signal"]:
+            if not out.get(key) and catalog_item.get(key):
+                out[key] = catalog_item[key]
+    out.update(company_pathway_profile({**(catalog_item or {}), **out}))
     return out
 
 
@@ -2835,6 +3348,87 @@ def company_catalog_item(company: str, region: str | None = None) -> dict | None
     return None
 
 
+def company_pathway_profile(item: dict | None) -> dict:
+    item = item or {}
+    name = str(item.get("company") or "")
+    tags = [str(tag) for tag in item.get("tags") or []]
+    tag_text = " ".join(tags).lower()
+    company_type = str(item.get("company_type") or item.get("source") or "Company")
+    type_text = company_type.lower()
+    name_text = name.lower()
+    greater_china = bool(
+        "中文友好" in tag_text
+        or "greater china" in type_text
+        or "出海" in tag_text
+        or any(term in name_text for term in [
+            "bytedance",
+            "tiktok",
+            "tencent",
+            "trip.com",
+            "alibaba",
+            "ant ",
+            "alipay",
+            "huawei",
+            "xiaomi",
+            "oppo",
+            "vivo",
+            "shein",
+            "pop mart",
+            "lark",
+            "patsnap",
+            "wiz",
+            "moomoo",
+        ])
+    )
+    ai_startup = bool("ai startup" in type_text or ("ai" in tag_text and ("初创" in tag_text or "startup" in type_text)))
+    sg_anchor = bool("本地标杆" in tag_text or any(term in name_text for term in ["grab", "dbs", "govtech", "singtel", "changi", "ncs", "sea", "shopee"]))
+    fintech = bool("fintech" in tag_text or "fintech" in type_text or "bank" in type_text or "payments" in type_text)
+    product_design = bool("产品" in tag_text or "设计" in tag_text or "product" in type_text or "design" in type_text)
+    service_brand = bool("服务" in tag_text or "retail" in type_text or "service" in type_text or "travel" in type_text)
+    if greater_china:
+        company_group = "greater_china"
+    elif ai_startup:
+        company_group = "ai_startup"
+    elif sg_anchor:
+        company_group = "sg_anchor"
+    elif fintech:
+        company_group = "fintech"
+    elif product_design:
+        company_group = "product_design"
+    elif service_brand:
+        company_group = "service_brand"
+    else:
+        company_group = "other"
+    language_signal = item.get("language_signal") or ("Chinese-friendly possible" if greater_china else "English first")
+    sponsorship_signal = item.get("sponsorship_signal") or ("possible" if sg_anchor or greater_china or "MNC" in company_type else "unknown")
+    conversion_signal = item.get("intern_to_fulltime_signal") or ("possible" if sg_anchor or "实习" in tag_text or "graduate" in type_text else "unknown")
+    startup_stage = item.get("startup_stage") or ("high-potential startup" if ai_startup or "高潜力初创" in tag_text else "")
+    return {
+        "company_group": item.get("company_group") or company_group,
+        "china_connection_level": item.get("china_connection_level") or ("high" if greater_china else "low"),
+        "language_signal": language_signal,
+        "sponsorship_signal": sponsorship_signal,
+        "intern_to_fulltime_signal": conversion_signal,
+        "startup_stage": startup_stage,
+        "official_careers_url": item.get("official_careers_url") or item.get("url") or "",
+    }
+
+
+@lru_cache(maxsize=2048)
+def company_catalog_match_for_job(company: str, region: str | None = None) -> dict | None:
+    code = active_region_code(region)
+    job_stub = {"company": company or "", "name": company or "", "position": "", "jd_text": ""}
+    for item in COMPANY_CATALOG:
+        if item.get("region") != code:
+            continue
+        ok, _reason = match_job_to_company(job_stub, item.get("company") or "", item)
+        if ok:
+            out = dict(item)
+            out.update(company_pathway_profile(item))
+            return out
+    return None
+
+
 def company_match_rows(region: str, city: str | None = None) -> list[dict]:
     code = active_region_code(region)
     query = "select * from jobs where region=?"
@@ -2842,7 +3436,7 @@ def company_match_rows(region: str, city: str | None = None) -> list[dict]:
     if city and code == "CN":
         query += " and (city=? or location like ? or coalesce(city, '')='')"
         values.extend([city, f"%{city}%"])
-    query += " order by score desc, updated_at desc limit 1000"
+    query += " order by updated_at desc limit 5000"
     with get_db() as conn:
         rows = conn.execute(query, values).fetchall()
     return [row_to_dict(row) for row in rows]
@@ -2853,6 +3447,10 @@ def matched_company_jobs(item: dict, jobs: list[dict], limit: int | None = None)
     matches: list[dict] = []
     seen: set[str] = set()
     for job in jobs:
+        if "company site" in (job.get("source") or "").lower():
+            position = job.get("position") or ""
+            if len(position) > 120 or not is_actionable_job_title(position) or not COMPANY_SCAN_TITLE_ROLE_PATTERN.search(position):
+                continue
         ok, reason = match_job_to_company(job, company, item)
         if not ok:
             continue
@@ -2889,6 +3487,15 @@ def enrich_company_items(items: list[dict], region: str, city: str | None = None
     enriched = []
     for item in items:
         out = company_item_from_row(item)
+        out["dismissed"] = out.get("status") == "Dropped" or bool(out.get("dismissed"))
+        if out["dismissed"]:
+            out["aliases"] = company_alias_values(out.get("company") or "", out)
+            out["matched_jobs_count"] = 0
+            out["matched_official_count"] = 0
+            out["last_scan_status"] = "hidden"
+            out["last_scan_note"] = "已暂时隐藏这家公司岗位；重新关注后恢复。"
+            enriched.append(out)
+            continue
         matches = matched_company_jobs(out, jobs)
         out["aliases"] = company_alias_values(out.get("company") or "", out)
         out["matched_jobs_count"] = len(matches)
@@ -2918,6 +3525,17 @@ def company_jobs_payload(company: str, region: str | None = None, city: str | No
             ).fetchone()
         if watched_row:
             item = {**item, **company_item_from_row(row_to_dict(watched_row))}
+    if item.get("status") == "Dropped":
+        return {
+            "company": item.get("company") or company,
+            "region": code,
+            "city": city_name,
+            "aliases": company_alias_values(item.get("company") or company, item),
+            "matched_jobs_count": 0,
+            "jobs": [],
+            "last_scan_status": "hidden",
+            "last_scan_note": "你已选择暂时不关注这家公司；重新关注后才会显示它的岗位。",
+        }
     rows = company_match_rows(code, city_name)
     company_item = company_item_from_row(item)
     all_matches = matched_company_jobs(company_item, rows)
@@ -2948,28 +3566,43 @@ def watched_company_keys(region: str | None = None) -> set[str]:
     return terms
 
 
+def dismissed_company_keys(region: str | None = None) -> set[str]:
+    code = active_region_code(region)
+    with get_db() as conn:
+        rows = conn.execute(
+            "select * from watch_companies where region=? and status='Dropped'",
+            (code,),
+        ).fetchall()
+    terms: set[str] = set()
+    for row in rows:
+        item = company_item_from_row(row_to_dict(row))
+        terms.update(company_match_terms(item["company"], item))
+    return terms
+
+
 def company_catalog(region: str | None = None, city: str | None = None) -> list[dict]:
     code = active_region_code(region)
     city_name = (city or active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]).strip()
     with get_db() as conn:
-        watched_rows = conn.execute(
-            "select * from watch_companies where region=? and status='Watch'",
+        company_rows = conn.execute(
+            "select * from watch_companies where region=? and status in ('Watch', 'Dropped')",
             (code,),
         ).fetchall()
-    watched = {row["company"].lower(): row_to_dict(row) for row in watched_rows}
+    company_states = {row["company"].lower(): row_to_dict(row) for row in company_rows}
     items = []
     for item in COMPANY_CATALOG:
         if item["region"] != code:
             continue
         out = dict(item)
-        watched_item = watched.get(item["company"].lower())
-        if watched_item:
-            out.update(watched_item)
-        out["watched"] = item["company"].lower() in watched
+        state_item = company_states.get(item["company"].lower())
+        if state_item:
+            out.update(state_item)
+        out["watched"] = out.get("status") == "Watch"
+        out["dismissed"] = out.get("status") == "Dropped"
         out["city_match"] = city_name in (item.get("city_tags") or [])
         items.append(out)
     items = enrich_company_items(items, code, city_name)
-    items.sort(key=lambda value: (value.get("watched", False), value.get("city_match", False), int(value.get("priority") or 0)), reverse=True)
+    items.sort(key=lambda value: (value.get("watched", False), not value.get("dismissed", False), value.get("city_match", False), int(value.get("priority") or 0)), reverse=True)
     return items
 
 
@@ -3410,9 +4043,47 @@ def hard_flag_patterns(text: str) -> list[str]:
 
 
 def detect_employment_type(position: str, jd_text: str = "", job_type: str = "") -> str:
-    text = f"{position}\n{job_type}\n{jd_text}".lower()
-    if re.search(r"\b(intern|internship)\b|实习|實習", text):
+    title = (position or "").lower()
+    type_text = (job_type or "").lower()
+    jd_lower = (jd_text or "").lower()
+    text = f"{title}\n{type_text}\n{jd_lower}"
+    senior_title = re.search(r"\b(principal|lead|senior|staff|manager|director|head)\b", title)
+    high_experience = re.search(r"\b([3-9]|\d{2,})\+?\s*(years?|yrs?)\b", jd_lower)
+
+    if re.search(r"\b(intern|internship)\b|实习|實習", title):
         return "Internship"
+    if re.search(r"\b(graduate|graduate programme|graduate program|new grad|fresh graduate|management associate|graduate trainee|trainee)\b|校招|应届|應屆", title):
+        return "Graduate"
+    if re.search(r"\b(contract|contractor|temporary|temp|fixed[-\s]?term|freelance|part[-\s]?time)\b|兼职|合约|合約", title):
+        return "Contract"
+    if re.search(r"\b(full[-\s]?time|permanent)\b|正式|全职|全職", title) or (senior_title and high_experience):
+        return "Full-time"
+
+    explicit_jd_type = re.search(
+        r"\bemployment\s+type\s*[:\-]?\s*(intern(?:ship)?|graduate|contract(?:or)?|temporary|full[-\s]?time|permanent|part[-\s]?time)\b",
+        jd_lower,
+    )
+    if explicit_jd_type:
+        explicit_value = explicit_jd_type.group(1)
+        if explicit_value.startswith("intern"):
+            return "Internship"
+        if explicit_value == "graduate":
+            return "Graduate"
+        if explicit_value in {"full-time", "full time", "permanent"}:
+            return "Full-time"
+        return "Contract"
+
+    type_matches = set()
+    if re.search(r"\b(intern|internship)\b|实习|實習", type_text):
+        type_matches.add("Internship")
+    if re.search(r"\b(graduate|new grad|fresh graduate)\b|校招|应届|應屆", type_text):
+        type_matches.add("Graduate")
+    if re.search(r"\b(contract|contractor|temporary|temp|fixed[-\s]?term|freelance|part[-\s]?time)\b|兼职|合约|合約", type_text):
+        type_matches.add("Contract")
+    if re.search(r"\b(full[-\s]?time|permanent)\b|正式|全职|全職", type_text):
+        type_matches.add("Full-time")
+    if len(type_matches) == 1 and not senior_title:
+        return next(iter(type_matches))
     if re.search(r"\b(graduate|graduate programme|graduate program|new grad|fresh graduate|management associate|graduate trainee)\b|校招|应届|應屆", text):
         return "Graduate"
     if re.search(r"\b(contract|contractor|temporary|temp|fixed[-\s]?term|freelance|part[-\s]?time)\b|兼职|合约|合約", text):
@@ -3423,10 +4094,27 @@ def detect_employment_type(position: str, jd_text: str = "", job_type: str = "")
 
 
 def detect_conversion_opportunity(position: str, jd_text: str = "", job_type: str = "") -> bool:
+    return detect_conversion_signal(position, jd_text, job_type)[0] in {"strong", "possible"}
+
+
+def detection_evidence(text: str, patterns: list[str], label: str, limit: int = 2) -> list[str]:
+    evidence: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.I):
+            start, end = match.span()
+            snippet = clean_text(text[max(0, start - 42): min(len(text), end + 58)])
+            if snippet and snippet not in evidence:
+                evidence.append(f"{label}: {snippet}")
+            if len(evidence) >= limit:
+                return evidence
+    return evidence
+
+
+def detect_conversion_signal(position: str, jd_text: str = "", job_type: str = "") -> tuple[str, list[str]]:
     text = f"{position}\n{job_type}\n{jd_text}".lower()
     if re.search(r"\b(no|not|without)\s+(guarantee|guaranteed|promise|possibility)?\s*(of\s+)?(conversion|return offer|full[-\s]?time offer)", text):
-        return False
-    patterns = [
+        return "none", detection_evidence(text, [r"\b(no|not|without)\s+(guarantee|guaranteed|promise|possibility)?\s*(of\s+)?(conversion|return offer|full[-\s]?time offer)[^.。\n]*"], "转正风险")
+    strong_patterns = [
         r"\bconvert(?:ed|ible|sion)?\s+(?:to|into)?\s*(?:a\s+)?full[-\s]?time\b",
         r"\bfull[-\s]?time\s+conversion\b",
         r"\breturn\s+offer\b",
@@ -3434,7 +4122,100 @@ def detect_conversion_opportunity(position: str, jd_text: str = "", job_type: st
         r"\bpermanent\s+conversion\b",
         r"(转正|轉正|留用|留任)",
     ]
-    return any(re.search(pattern, text, flags=re.I) for pattern in patterns)
+    possible_patterns = [
+        r"\bgraduate\s+(programme|program|pipeline|scheme)\b",
+        r"\bmanagement\s+associate\b",
+        r"\btrainee\s+(programme|program)\b",
+        r"\bpotential\s+(?:for\s+)?(?:full[-\s]?time|permanent)\b",
+        r"\bmay\s+lead\s+to\s+(?:a\s+)?full[-\s]?time\b",
+        r"(校招|管培|毕业生项目|畢業生項目)",
+    ]
+    strong = detection_evidence(text, strong_patterns, "可转正")
+    if strong:
+        return "strong", strong
+    possible = detection_evidence(text, possible_patterns, "可能转正")
+    if possible:
+        return "possible", possible
+    return "unknown", []
+
+
+def detect_visa_sponsorship_signal(position: str, jd_text: str = "", job_type: str = "", region: str | None = None) -> tuple[str, list[str]]:
+    text = f"{position}\n{job_type}\n{jd_text}".lower()
+    negative_patterns = [
+        r"\b(no|not|without)\s+(visa|work\s+pass|work\s+permit|employment\s+pass|s\s+pass|sponsorship)[^.。\n]*",
+        r"\b(no|not|without)\s+(sponsorship|sponsor)[^.。\n]*",
+        r"\b(visa|work\s+pass|work\s+permit|employment\s+pass|s\s+pass)\s+sponsorship\s+(?:is\s+)?(?:not|unavailable)[^.。\n]*",
+        r"\b(?:do(?:es)?\s+not|will\s+not|cannot|can't|won't|unable\s+to)\s+(?:provide|offer|support|sponsor)[^.。\n]*(?:visa|work\s+pass|work\s+permit|employment\s+pass|s\s+pass|sponsorship)[^.。\n]*",
+        r"\b(?:must|need(?:s)?\s+to)\s+(?:already\s+)?(?:have|hold)[^.。\n]*(?:right\s+to\s+work|valid\s+work\s+authori[sz]ation)[^.。\n]*",
+        r"\b(singaporeans?\s+only|singapore\s+citizens?\s+only|pr\s+only|permanent\s+residents?\s+only)[^.。\n]*",
+        r"\bmust\s+be\s+(a\s+)?(singaporean|singapore\s+citizen|pr|permanent\s+resident)[^.。\n]*",
+    ]
+    positive_patterns = [
+        r"\b(visa|work\s+pass|work\s+permit|employment\s+pass|ep|s\s+pass)\s+(sponsor|sponsorship|support|provided|available)[^.。\n]*",
+        r"\b(sponsor|sponsorship|support)\s+(visa|work\s+pass|work\s+permit|employment\s+pass|ep|s\s+pass)[^.。\n]*",
+        r"\bopen\s+to\s+(international|foreign)\s+(candidates|students|applicants)[^.。\n]*",
+        r"\bwork\s+authori[sz]ation\s+(support|sponsorship)[^.。\n]*",
+        r"(工签|工作准证|就业准证|EP|S Pass).{0,40}(支持|担保|可办|sponsor)",
+    ]
+    negative = detection_evidence(text, negative_patterns, "工签风险")
+    if negative:
+        return "unlikely", negative
+    positive = detection_evidence(text, positive_patterns, "工签可能")
+    if positive:
+        return "possible", positive
+    if re.search(r"\b(work authorization|work authorisation|visa sponsorship|sponsorship|employment pass|s pass)\b", text):
+        return "unclear", detection_evidence(text, [r"\b(work authorization|work authorisation|visa sponsorship|sponsorship|employment pass|s pass)[^.。\n]*"], "工签待确认", 1)
+    return "unknown", []
+
+
+def detect_language_signal(position: str, jd_text: str = "", job_type: str = "", company: str = "") -> tuple[str, list[str]]:
+    text = f"{company}\n{position}\n{job_type}\n{jd_text}".lower()
+    chinese_patterns = [
+        r"\b(mandarin|chinese|putonghua|bilingual\s+.*?(english|mandarin|chinese)|china\s+market|greater\s+china|apac\s+china)[^.。\n]*",
+        r"(中文|普通话|普通話|华语|華語|中国市场|中國市場|大中华|大中華|双语|雙語).{0,60}",
+    ]
+    english_patterns = [
+        r"\b(excellent|strong|fluent)\s+english\s+(communication|skills)[^.。\n]*",
+        r"\benglish[-\s]?first\b",
+    ]
+    chinese = detection_evidence(text, chinese_patterns, "中文友好可能")
+    if chinese:
+        return "chinese_friendly_possible", chinese
+    english = detection_evidence(text, english_patterns, "英文为主", 1)
+    if english:
+        return "english_first", english
+    return "unknown", []
+
+
+def pathway_score_from_signals(
+    employment_type: str,
+    conversion_signal: str,
+    visa_sponsorship_signal: str,
+    language_signal: str,
+    company_profile: dict | None = None,
+) -> float:
+    score = 1.8
+    if employment_type == "Internship":
+        score += 0.9
+    elif employment_type == "Graduate":
+        score += 0.65
+    elif employment_type == "Full-time":
+        score += 0.25
+    elif employment_type == "Contract":
+        score -= 0.15
+    score += {"strong": 0.8, "possible": 0.45, "unknown": 0.0, "none": -0.5}.get(conversion_signal, 0.0)
+    score += {"possible": 0.65, "unclear": 0.1, "unknown": 0.0, "unlikely": -0.85}.get(visa_sponsorship_signal, 0.0)
+    score += {"chinese_friendly_possible": 0.35, "english_first": 0.0, "unknown": 0.0}.get(language_signal, 0.0)
+    profile = company_profile or {}
+    if profile.get("china_connection_level") == "high":
+        score += 0.25
+    if profile.get("company_group") in {"sg_anchor", "ai_startup", "greater_china"}:
+        score += 0.18
+    if profile.get("sponsorship_signal") == "possible" and visa_sponsorship_signal != "unlikely":
+        score += 0.2
+    if profile.get("intern_to_fulltime_signal") == "possible" and conversion_signal == "unknown":
+        score += 0.16
+    return round(max(0.0, min(5.0, score)), 2)
 
 
 def normalize_salary_currency(value: str) -> str:
@@ -3454,11 +4235,11 @@ def normalize_salary_period(text: str, amount: float | None = None) -> str:
     lowered = (text or "").lower()
     if re.search(r"\b(per\s+annum|annually|annual|yearly|per\s+year|p\.?\s*a\.?|/year|/yr)\b", lowered):
         return "yearly"
-    if re.search(r"\b(monthly|per\s+month|/month|/mo|pm)\b", lowered):
+    if re.search(r"\b(monthly|per\s+month|a\s+month|/month|/mo|pm)\b", lowered):
         return "monthly"
-    if re.search(r"\b(daily|per\s+day|/day|pd)\b", lowered):
+    if re.search(r"\b(daily|per\s+day|a\s+day|/day|pd)\b", lowered):
         return "daily"
-    if re.search(r"\b(hourly|per\s+hour|/hour|/hr|ph)\b", lowered):
+    if re.search(r"\b(hourly|per\s+hour|an\s+hour|/hour|/hr|ph)\b", lowered):
         return "hourly"
     if amount and amount >= 30000:
         return "yearly"
@@ -3476,27 +4257,72 @@ def parse_salary_number(value: str, suffix: str = "") -> float:
     return amount
 
 
+def salary_match_context(text: str, start: int, end: int) -> str:
+    sentence_start = max(text.rfind(mark, 0, start) for mark in [".", "!", "?", ";", "\n"]) + 1
+    sentence_ends = [text.find(mark, end) for mark in [".", "!", "?", ";", "\n"]]
+    sentence_ends = [value for value in sentence_ends if value >= 0]
+    sentence_end = min(sentence_ends) if sentence_ends else len(text)
+    return clean_text(text[max(sentence_start, start - 80): min(sentence_end, end + 80)])
+
+
+def is_salary_context(context: str) -> bool:
+    lowered = context.lower()
+    business_metric = re.search(
+        r"\b(raised|funding|funded|financing|investors?|investment|invested|valuation|valued|"
+        r"revenue|sales|assets?|portfolio\s+value|market\s+cap|worth|fund\s+of|budget|spend\s+on)\b|"
+        r"\bclients?\b.{0,50}\bpay(?:ing|s|ed)?\b|"
+        r"\b(million|billion|mn|bn)\b",
+        lowered,
+    )
+    if business_metric:
+        return False
+    return bool(re.search(
+        r"\b(salary|pay|compensation|stipend|remuneration|allowance|wage|earnings?)\b|"
+        r"\b(monthly|hourly|yearly|annually|daily|per\s+(?:month|year|annum|hour|day)|"
+        r"a\s+(?:month|year|hour|day))\b|/\s*(?:mo(?:nth)?|yr|year|hr|hour|day)\b|"
+        r"薪资|薪酬|月薪|年薪|时薪|津贴",
+        lowered,
+    ))
+
+
 def parse_salary_info(position: str, jd_text: str = "", job_type: str = "", region: str | None = None) -> dict:
     text = clean_text(f"{position}\n{job_type}\n{jd_text}")
+    period_pattern = r"(?:/\s*(?:mo(?:nth)?|yr|year|hr|hour|day)|per\s+(?:month|year|annum|hour|day)|a\s+(?:month|year|hour|day))"
     pattern = re.compile(
         r"(?P<currency>SGD|S\$|SG\$|HKD|HK\$|RMB|CNY|USD|US\$|\$|¥)\s*"
         r"(?P<first>\d[\d,]*(?:\.\d+)?)\s*(?P<first_suffix>[kK])?"
+        rf"(?P<first_period>\s*{period_pattern})?"
         r"(?:\s*(?:-|–|—|~|to|至|到)\s*"
         r"(?:(?:SGD|S\$|SG\$|HKD|HK\$|RMB|CNY|USD|US\$|\$|¥)\s*)?"
-        r"(?P<second>\d[\d,]*(?:\.\d+)?)\s*(?P<second_suffix>[kK])?)?",
+        r"(?P<second>\d[\d,]*(?:\.\d+)?)\s*(?P<second_suffix>[kK])?"
+        rf"(?P<second_period>\s*{period_pattern})?)?",
         flags=re.I,
     )
     for match in pattern.finditer(text):
         start, end = match.span()
-        window = text[max(0, start - 24): min(len(text), end + 42)]
-        first = parse_salary_number(match.group("first"), match.group("first_suffix") or "")
-        second = parse_salary_number(match.group("second"), match.group("second_suffix") or "") if match.group("second") else first
+        window = salary_match_context(text, start, end)
+        if not is_salary_context(window):
+            continue
+        first_suffix = match.group("first_suffix") or ""
+        second_suffix = match.group("second_suffix") or ""
+        if match.group("second") and not first_suffix and second_suffix:
+            first_suffix = second_suffix
+        if match.group("second") and first_suffix and not second_suffix:
+            second_suffix = first_suffix
+        first = parse_salary_number(match.group("first"), first_suffix)
+        second = parse_salary_number(match.group("second"), second_suffix) if match.group("second") else first
         salary_min = min(first, second)
         salary_max = max(first, second)
         if salary_max <= 0:
             continue
         currency = normalize_salary_currency(match.group("currency"))
         period = normalize_salary_period(window, salary_max)
+        if period == "monthly" and (salary_max < 300 or (salary_min < 100 and salary_max / max(salary_min, 1) > 20)):
+            continue
+        if period == "yearly" and salary_max < 10000:
+            continue
+        if period == "hourly" and salary_max > 500:
+            continue
         return {
             "salary_min": salary_min,
             "salary_max": salary_max,
@@ -3533,11 +4359,32 @@ def salary_to_monthly(amount: float | int | None, period: str | None) -> float |
     return value
 
 
-def job_metadata(position: str, jd_text: str = "", job_type: str = "", region: str | None = None) -> dict:
+def job_metadata(position: str, jd_text: str = "", job_type: str = "", region: str | None = None, company: str = "", source: str = "") -> dict:
     salary = parse_salary_info(position, jd_text, job_type, region)
+    employment_type = detect_employment_type(position, jd_text, job_type)
+    conversion_signal, conversion_evidence = detect_conversion_signal(position, jd_text, job_type)
+    visa_signal, visa_evidence = detect_visa_sponsorship_signal(position, jd_text, job_type, region)
+    language_signal, language_evidence = detect_language_signal(position, jd_text, job_type, company)
+    company_profile = company_catalog_match_for_job(company, region) if company else None
+    if language_signal == "unknown" and company_profile:
+        company_language = str(company_profile.get("language_signal") or "").lower()
+        if "chinese" in company_language:
+            language_signal = "chinese_friendly_possible"
+            language_evidence.append(f"公司信号: {company_profile.get('language_signal')}")
+        elif "english" in company_language:
+            language_signal = "english_first"
+    evidence = [*conversion_evidence, *visa_evidence, *language_evidence]
+    if company_profile:
+        evidence.append(f"公司分组: {company_profile.get('company_group')} / {company_profile.get('sponsorship_signal')}")
+    pathway_score = pathway_score_from_signals(employment_type, conversion_signal, visa_signal, language_signal, company_profile)
     return {
-        "employment_type": detect_employment_type(position, jd_text, job_type),
-        "conversion_opportunity": 1 if detect_conversion_opportunity(position, jd_text, job_type) else 0,
+        "employment_type": employment_type,
+        "conversion_opportunity": 1 if conversion_signal in {"strong", "possible"} else 0,
+        "conversion_signal": conversion_signal,
+        "visa_sponsorship_signal": visa_signal,
+        "language_signal": language_signal,
+        "pathway_score": pathway_score,
+        "pathway_evidence_json": evidence[:8],
         **salary,
     }
 
@@ -3545,17 +4392,60 @@ def job_metadata(position: str, jd_text: str = "", job_type: str = "", region: s
 def backfill_job_metadata(conn: sqlite3.Connection) -> None:
     rows = conn.execute(
         """
-        select id, position, jd_text, job_type, region, employment_type, salary_fit
+        select id, company, position, source, jd_text, job_type, region, employment_type, salary_fit,
+               conversion_signal, visa_sponsorship_signal, language_signal, pathway_evidence_json
         from jobs
         where employment_type is null
            or salary_period is null
            or salary_fit is null
            or salary_fit = ''
+           or conversion_signal is null
+           or conversion_signal = ''
+           or visa_sponsorship_signal is null
+           or visa_sponsorship_signal = ''
+           or language_signal is null
+           or language_signal = ''
+           or pathway_evidence_json is null
+           or pathway_evidence_json = ''
+           or (
+               salary_min is not null
+               and (
+                   lower(salary_text) like '% billion%'
+                   or lower(salary_text) like '% million%'
+                   or lower(salary_text) like '%raised%'
+                   or lower(salary_text) like '%revenue%'
+                   or lower(salary_text) like '%annual sales%'
+                   or lower(salary_text) like '%investment%'
+                   or lower(salary_text) like '%assets%'
+                   or lower(salary_text) like '%portfolio value%'
+                   or lower(salary_text) like '%fund of%'
+                   or lower(salary_text) like '%spend on%'
+                   or (lower(salary_text) like '%client%' and lower(salary_text) like '%paying%')
+                   or (salary_min < 1000 and salary_max >= 30000)
+                   or (salary_period = 'monthly' and salary_max < 300)
+                   or (salary_period = 'monthly' and salary_min < 100 and salary_max / max(salary_min, 1) > 20)
+                   or (salary_period = 'yearly' and salary_max < 10000)
+                   or (salary_period = 'hourly' and salary_max > 500)
+                   or (salary_min < 100 and lower(salary_text) like '%a month%')
+               )
+           )
+           or (
+               visa_sponsorship_signal != 'unlikely'
+               and (
+                   lower(jd_text) like '%visa sponsorship not available%'
+                   or lower(jd_text) like '%visa sponsorship is not available%'
+                   or lower(jd_text) like '%do not provide visa sponsorship%'
+                   or lower(jd_text) like '%does not provide visa sponsorship%'
+                   or lower(jd_text) like '%will not sponsor%'
+                   or lower(jd_text) like '%cannot sponsor%'
+                   or (lower(jd_text) like '%must already have%' and lower(jd_text) like '%right to work%')
+               )
+           )
         limit 1000
         """
     ).fetchall()
     for row in rows:
-        metadata = job_metadata(row["position"] or "", row["jd_text"] or "", row["job_type"] or "", row["region"])
+        metadata = job_metadata(row["position"] or "", row["jd_text"] or "", row["job_type"] or "", row["region"], row["company"] or "", row["source"] or "")
         conn.execute(
             """
             update jobs set
@@ -3567,6 +4457,11 @@ def backfill_job_metadata(conn: sqlite3.Connection) -> None:
                 salary_period=?,
                 salary_text=?,
                 salary_fit=?,
+                conversion_signal=?,
+                visa_sponsorship_signal=?,
+                language_signal=?,
+                pathway_score=?,
+                pathway_evidence_json=?,
                 updated_at=coalesce(updated_at, ?)
             where id=?
             """,
@@ -3579,6 +4474,11 @@ def backfill_job_metadata(conn: sqlite3.Connection) -> None:
                 metadata["salary_period"],
                 metadata["salary_text"],
                 metadata["salary_fit"],
+                metadata["conversion_signal"],
+                metadata["visa_sponsorship_signal"],
+                metadata["language_signal"],
+                metadata["pathway_score"],
+                json.dumps(metadata["pathway_evidence_json"], ensure_ascii=False),
                 now_iso(),
                 row["id"],
             ),
@@ -3598,10 +4498,26 @@ def evidence_overlap_score(jd_text: str, resume_text: str, keywords: list[str], 
     return min(1.0, hits / max(1, full_points))
 
 
+def contains_bounded_ascii_word(text: str, keyword: str) -> bool:
+    start = 0
+    while True:
+        position = text.find(keyword, start)
+        if position < 0:
+            return False
+        end = position + len(keyword)
+        before_is_word = position > 0 and (text[position - 1].isalnum() or text[position - 1] == "_")
+        after_is_word = end < len(text) and (text[end].isalnum() or text[end] == "_")
+        if not before_is_word and not after_is_word:
+            return True
+        start = position + 1
+
+
 def has_keyword(text: str, keyword: str) -> bool:
     keyword = keyword.lower().strip()
     if not keyword:
         return False
+    if keyword.isascii() and keyword.isalnum():
+        return contains_bounded_ascii_word(text, keyword)
     if re.fullmatch(r"[a-z0-9+#-]+", keyword):
         return re.search(rf"\b{re.escape(keyword)}\b", text) is not None
     return keyword in text
@@ -3744,6 +4660,39 @@ def parse_linkedin_jobs_from_html(html: str, query: str, limit: int) -> list[dic
     return jobs
 
 
+def parse_linkedin_public_detail_html(html: str) -> str:
+    match = re.search(
+        r'<div[^>]*class="[^"]*\bshow-more-less-html__markup\b[^"]*"[^>]*>(.*?)</div>',
+        html or "",
+        flags=re.I | re.S,
+    )
+    detail = clean_text(match.group(1)) if match else ""
+    return detail if len(detail) >= 120 else ""
+
+
+def enrich_linkedin_jobs_from_public_pages(jobs: list[dict], limit: int = 12) -> int:
+    candidates = [job for job in jobs if len(clean_text(job.get("jd_text") or "")) < 500][:limit]
+    if not candidates:
+        return 0
+
+    def fetch_detail(job: dict) -> tuple[dict, str]:
+        html = http_get(job.get("url") or "", timeout=12, retries=0)
+        return job, parse_linkedin_public_detail_html(html)
+
+    enriched = 0
+    with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as executor:
+        futures = [executor.submit(fetch_detail, job) for job in candidates]
+        for future in as_completed(futures):
+            try:
+                job, detail = future.result()
+            except Exception:
+                continue
+            if detail:
+                job["jd_text"] = detail
+                enriched += 1
+    return enriched
+
+
 def parse_internsg_jobs_from_html(html: str, query: str, limit: int) -> list[dict]:
     jobs: list[dict] = []
     seen: set[str] = set()
@@ -3767,6 +4716,7 @@ def parse_internsg_jobs_from_html(html: str, query: str, limit: int) -> list[dic
         cols = re.findall(r'<div class="ast-col-lg-\d+[^"]*">(.*?)</div>', row, flags=re.I | re.S)
         company = clean_text(cols[0]) if cols else "InternSG Company"
         company = re.sub(r"\b[\w.-]+\.[a-z]{2,}\b.*$", "", company).strip() or "InternSG Company"
+        company = clean_company_name(company) or "InternSG Company"
         position = clean_text(link_match.group(2)) or "InternSG Role"
         location = clean_text(cols[2]) if len(cols) >= 3 else "Singapore"
         period = clean_text(cols[3]) if len(cols) >= 4 else ""
@@ -3784,18 +4734,90 @@ def parse_internsg_jobs_from_html(html: str, query: str, limit: int) -> list[dic
     return jobs
 
 
+def parse_internsg_detail_text(html: str) -> str:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return clean_text(html)[:12000]
+    soup = BeautifulSoup(html or "", "html.parser")
+    container = soup.select_one(".isg-detail-container")
+    if not container:
+        return clean_text(html)[:12000]
+    return clean_text(container.get_text(" ", strip=True))[:12000]
+
+
 def parse_indeed_jobs_from_html(html: str, query: str, limit: int) -> list[dict]:
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        BeautifulSoup = None
+
     jobs: list[dict] = []
     seen: set[str] = set()
+    seen_signatures: set[str] = set()
+    seen_positions: set[str] = set()
+    if BeautifulSoup:
+        soup = BeautifulSoup(html, "html.parser")
+        links = soup.select('a[data-jk][href], a[href*="/rc/clk"], a[href*="/viewjob"]')
+        for link in links:
+            if len(jobs) >= limit:
+                break
+            href = link.get("href") or ""
+            parsed_href = urlparse(absolute_url("https://sg.indeed.com", href))
+            job_key = link.get("data-jk") or (parse_qs(parsed_href.query).get("jk") or [""])[0]
+            if not job_key:
+                continue
+            job_url = canonical_job_url("Indeed", parsed_href.geturl(), job_key)
+            if job_url in seen:
+                continue
+            position = soup_text(link) or clean_text(link.get("title") or "")
+            if not position:
+                title_node = link.find(attrs={"title": True}) if hasattr(link, "find") else None
+                position = clean_text(title_node.get("title") or soup_text(title_node)) if title_node else ""
+            if not position:
+                continue
+            card = link.find_parent(attrs={"class": re.compile(r"(job_seen_beacon|result|cardOutline)", re.I)}) if hasattr(link, "find_parent") else None
+            if not card:
+                card = link.find_parent(["li", "td", "div"]) if hasattr(link, "find_parent") else link
+            company = soup_text(card.select_one('[data-testid="company-name"]')) if hasattr(card, "select_one") else ""
+            if not company:
+                company_node = card.select_one('[data-testid="company-name"], [class*="company"]') if hasattr(card, "select_one") else None
+                company = soup_text(company_node)
+            if not company:
+                company = "Indeed Company"
+            location = soup_text(card.select_one('[data-testid="text-location"]')) if hasattr(card, "select_one") else ""
+            signature = f"{company.lower()}|{position.lower()}"
+            position_signature = position.lower()
+            if signature in seen_signatures or (company == "Indeed Company" and position_signature in seen_positions):
+                continue
+            seen_signatures.add(signature)
+            seen_positions.add(position_signature)
+            seen.add(job_url)
+            jobs.append(
+                {
+                    "company": company,
+                    "position": position,
+                    "source": "Indeed",
+                    "url": job_url,
+                    "location": location or "Singapore",
+                    "job_type": "Internship / Full-time",
+                    "jd_text": soup_text(card)[:8000] or f"{position}\n{company}\nSource query: {query}",
+                    "external_job_id": job_key,
+                }
+            )
+        if jobs:
+            return jobs[:limit]
+
     for card in re.split(r"<div[^>]+class=\"[^\"]*job_seen_beacon", html, flags=re.I):
         if len(jobs) >= limit:
             break
-        link_match = re.search(r'href="([^"]*?/viewjob\?[^"]+)"', card, flags=re.I)
+        link_match = re.search(r'href="([^"]*?/(?:viewjob|rc/clk)\?[^"]+)"', card, flags=re.I)
         title_match = re.search(r'title="([^"]+)"', card, flags=re.I)
         company_match = re.search(r'data-testid="company-name"[^>]*>(.*?)</', card, flags=re.I | re.S)
         if not link_match or not title_match:
             continue
-        job_url = absolute_url("https://sg.indeed.com", link_match.group(1))
+        raw_url = absolute_url("https://sg.indeed.com", link_match.group(1))
+        job_url = canonical_job_url("Indeed", raw_url)
         if job_url in seen:
             continue
         seen.add(job_url)
@@ -3815,6 +4837,131 @@ def parse_indeed_jobs_from_html(html: str, query: str, limit: int) -> list[dict]
     return jobs
 
 
+def indeed_search_url(host: str, query: str, location: str) -> str:
+    return f"https://{host}/jobs?q={quote_plus(query)}&l={quote_plus(location)}&fromage=7&sort=date"
+
+
+def fetch_indeed_jobs_with_browser(
+    limit: int,
+    queries: list[str],
+    region: str | None = None,
+    time_budget_seconds: float = 24,
+) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    host = REGION_CONFIGS[code].get("indeed_host")
+    if not host:
+        return [], [f"Indeed is not configured for {REGION_CONFIGS[code]['label']}."]
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return [], ["Indeed 浏览器兜底不可用：Playwright 未安装。"]
+
+    location = REGION_CONFIGS[code]["search_location"]
+    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
+    jobs: list[dict] = []
+    failures: list[str] = []
+    seen: set[str] = set()
+    started = time.monotonic()
+    browser = None
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+                locale="en-SG",
+                viewport={"width": 1365, "height": 900},
+            )
+            for query in queries:
+                if len(jobs) >= limit:
+                    break
+                if time.monotonic() - started > time_budget_seconds:
+                    failures.append("Indeed 浏览器兜底：来源级时间预算已用完。")
+                    break
+                url = indeed_search_url(host, query, location)
+                try:
+                    response = page.goto(url, wait_until="domcontentloaded", timeout=18000)
+                    page.wait_for_timeout(1800)
+                    body_text = page.locator("body").inner_text(timeout=5000).lower()
+                    if "captcha" in body_text or "verify you are human" in body_text:
+                        failures.append("Indeed 浏览器兜底受限：页面要求验证码或人工验证。")
+                        break
+                    parsed_jobs = parse_indeed_jobs_from_html(page.content(), query, limit - len(jobs))
+                    if not parsed_jobs and response and response.status >= 400:
+                        failures.append(f"Indeed browser {query}: HTTP {response.status}")
+                except Exception as exc:
+                    failures.append(f"Indeed browser {query}: {exc}")
+                    continue
+                for job in parsed_jobs:
+                    job_url = job.get("url", "")
+                    if not job_url or job_url in seen:
+                        continue
+                    seen.add(job_url)
+                    job["region"] = code
+                    job["city"] = city
+                    job["source_region"] = code
+                    if code != "SG":
+                        job["location"] = job.get("location") or location
+                    jobs.append(job)
+                    if len(jobs) >= limit:
+                        break
+    except Exception as exc:
+        failures.append(f"Indeed 浏览器兜底启动失败：{exc}")
+    finally:
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+    return jobs[:limit], failures
+
+
+def parse_serpapi_indeed_jobs(payload: dict, query: str, limit: int, region: str | None = None) -> list[dict]:
+    code = active_region_code(region)
+    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for item in payload.get("jobs_results") or []:
+        if len(jobs) >= limit:
+            break
+        title = clean_text(item.get("title") or "")
+        company = clean_text(item.get("company_name") or "")
+        if not title or not company:
+            continue
+        apply_options = item.get("apply_options") or []
+        indeed_link = ""
+        for option in apply_options:
+            link = option.get("link") or ""
+            title_text = f"{option.get('title') or ''} {link}".lower()
+            if "indeed" in title_text:
+                indeed_link = link
+                break
+        if not indeed_link:
+            continue
+        canonical = canonical_job_url("Indeed", indeed_link)
+        dedupe_key = canonical or f"{company}|{title}|{item.get('location')}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        description = clean_text(item.get("description") or "")
+        extensions = item.get("detected_extensions") or {}
+        job_type = " ".join(str(value) for value in extensions.values() if value)
+        jobs.append(
+            {
+                "company": company,
+                "position": title,
+                "source": "Indeed",
+                "url": canonical or indeed_link,
+                "location": clean_text(item.get("location") or city),
+                "region": code,
+                "city": city,
+                "source_region": code,
+                "job_type": clean_text(job_type) or "Google Jobs / Indeed",
+                "jd_text": (description or f"{title}\n{company}\nSource query: {query}\nIndeed apply option via Google Jobs")[:12000],
+            }
+        )
+    return jobs[:limit]
+
+
 def jobstreet_slug(query: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", (query or "").lower()).strip("-")
     return slug or "internship"
@@ -3828,8 +4975,141 @@ def jobstreet_search_urls(query: str) -> list[str]:
     ]
 
 
+def jobstreet_api_search_url(query: str, page: int = 1) -> str:
+    return (
+        "https://sg.jobstreet.com/api/jobsearch/v5/search?"
+        f"siteKey=SG-Main&keywords={quote_plus(query)}&where=Singapore&page={page}"
+    )
+
+
 def soup_text(element) -> str:
     return clean_text(element.get_text(" ", strip=True)) if element else ""
+
+
+def parse_jobstreet_api_jobs(payload: dict, query: str, limit: int) -> list[dict]:
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for item in payload.get("data") or []:
+        if len(jobs) >= limit:
+            break
+        job_id = str(item.get("id") or "").strip()
+        title = clean_text(item.get("title") or "")
+        company = clean_text(item.get("companyName") or item.get("advertiser", {}).get("description") or "")
+        if not job_id or not title or not is_actionable_company_name(company, title):
+            continue
+        job_url = canonical_job_url("JobStreet", f"https://sg.jobstreet.com/job/{job_id}")
+        if job_url in seen:
+            continue
+        seen.add(job_url)
+        locations = item.get("locations") or []
+        location = ", ".join(clean_text(location.get("label") or "") for location in locations if location.get("label"))
+        work_types = item.get("workTypes") or []
+        salary = clean_text(item.get("salaryLabel") or "")
+        teaser = clean_text(item.get("teaser") or "")
+        bullets = [clean_text(value) for value in item.get("bulletPoints") or [] if clean_text(value)]
+        classifications = []
+        for value in item.get("classifications") or []:
+            classification = value.get("classification") or {}
+            subclassification = value.get("subclassification") or {}
+            label = " / ".join(
+                clean_text(part.get("description") or "")
+                for part in [classification, subclassification]
+                if part.get("description")
+            )
+            if label:
+                classifications.append(label)
+        jd_parts = [
+            title,
+            company,
+            location or "Singapore",
+            " ".join(work_types),
+            salary,
+            teaser,
+            *bullets,
+            *classifications,
+            f"Source query: {query}",
+        ]
+        jobs.append(
+            {
+                "company": company or "JobStreet Company",
+                "position": title,
+                "source": "JobStreet",
+                "url": job_url,
+                "location": location or "Singapore",
+                "job_type": ", ".join(work_types) or "Internship / Full-time",
+                "jd_text": "\n".join(part for part in jd_parts if part)[:12000],
+                "external_job_id": job_id,
+            }
+        )
+    return jobs[:limit]
+
+
+def parse_cultjobs_listing_urls(html: str, limit: int) -> list[str]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return []
+    soup = BeautifulSoup(html or "", "html.parser")
+    urls: list[str] = []
+    for article in soup.select("article.job_listing_type-internship.job_listing_location-singapore"):
+        link = article.select_one("h2.job-title a[href*='/job/']")
+        url = canonical_job_url("Cultjobs", link.get("href") if link else "")
+        if not url or url in urls:
+            continue
+        urls.append(url)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def parse_cultjobs_detail(html: str, url: str) -> dict | None:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return None
+    soup = BeautifulSoup(html or "", "html.parser")
+    title = soup_text(soup.select_one("h1.job-detail-title"))
+    company_link = soup.select_one(".job-metas-detail a[href*='/employer/']")
+    company = soup_text(company_link)
+    description = soup_text(soup.select_one(".job-detail-description"))
+    location = soup_text(soup.select_one(".job-metas-detail .job-location")) or "Singapore"
+    job_type = soup_text(soup.select_one(".job-metas-detail-bottom .type-job")) or "Internship"
+    salary = soup_text(soup.select_one(".job-metas-detail .job-salary"))
+    expiration = ""
+    for item in soup.select(".job-detail-detail li"):
+        if "expiration date" in soup_text(item).lower():
+            expiration = soup_text(item.select_one(".value"))
+            break
+    if expiration:
+        try:
+            expiry_date = dt.datetime.strptime(expiration, "%B %d, %Y").date()
+            if expiry_date < dt.date.today():
+                return None
+        except ValueError:
+            pass
+    if (
+        not title
+        or not COMPANY_SCAN_TITLE_ROLE_PATTERN.search(title)
+        or not is_actionable_company_name(company, title)
+        or "singapore" not in location.lower()
+    ):
+        return None
+    salary_info = parse_salary_info(title, salary, job_type, "SG")
+    if salary_info.get("salary_max") and salary:
+        salary_info["salary_text"] = re.sub(r"([$])\s+(?=\d)", r"\1", salary)
+    return {
+        "company": company,
+        "position": title,
+        "source": "Cultjobs",
+        "url": canonical_job_url("Cultjobs", url),
+        "location": location,
+        "job_type": job_type,
+        "jd_text": "\n".join(part for part in [title, company, location, job_type, salary, description] if part)[:12000],
+        "region": "SG",
+        "city": "Singapore",
+        "source_region": "SG",
+        **salary_info,
+    }
 
 
 def parse_jobstreet_jobs_from_html(html: str, query: str, limit: int) -> list[dict]:
@@ -4023,12 +5303,63 @@ def fetch_google_jobs(limit: int, region: str | None = None) -> tuple[list[dict]
     return jobs, failures
 
 
-def fetch_linkedin_jobs(limit: int, queries: list[str] | None = None, region: str | None = None) -> tuple[list[dict], list[str]]:
+def fetch_indeed_jobs_via_google_jobs(
+    limit: int,
+    queries: list[str],
+    region: str | None = None,
+) -> tuple[list[dict], list[str]]:
+    api_key = os.environ.get("SERPAPI_KEY", "").strip()
+    if not api_key:
+        return [], ["Indeed 受限：直连被站点拒绝；配置 SERPAPI_KEY 后可用 Google Jobs 补充 Indeed apply option。"]
+    code = active_region_code(region)
+    location = REGION_CONFIGS[code]["search_location"]
     jobs: list[dict] = []
     failures: list[str] = []
     seen: set[str] = set()
+    for query in queries:
+        if len(jobs) >= limit:
+            break
+        params = urlencode(
+            {
+                "engine": "google_jobs",
+                "q": query,
+                "location": location,
+                "hl": "en",
+                "api_key": api_key,
+            }
+        )
+        request = urllib.request.Request(
+            f"https://serpapi.com/search.json?{params}",
+            headers={"User-Agent": "Job Assistant local app"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+        except Exception as exc:
+            failures.append(f"Indeed Google Jobs fallback {query}: {exc}")
+            continue
+        for job in parse_serpapi_indeed_jobs(payload, query, limit - len(jobs), code):
+            url = canonical_job_url("Indeed", job.get("url", ""))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            job["url"] = url
+            jobs.append(job)
+            if len(jobs) >= limit:
+                break
+    if jobs:
+        failures.append("Indeed 直连受限，已用 Google Jobs 中的 Indeed apply option 补充。")
+    return jobs[:limit], failures
+
+
+def fetch_linkedin_jobs(limit: int, queries: list[str] | None = None, region: str | None = None) -> tuple[list[dict], list[str]]:
+    jobs: list[dict] = []
+    failures: list[str] = []
+    detail_failures: list[str] = []
+    seen: set[str] = set()
     code = active_region_code(region)
     location = REGION_CONFIGS[code]["search_location"]
+    detail_limited = False
     for query in (queries or region_queries(code)):
         if len(jobs) >= limit:
             break
@@ -4048,19 +5379,27 @@ def fetch_linkedin_jobs(limit: int, queries: list[str] | None = None, region: st
             if external_id in seen:
                 continue
             seen.add(external_id)
-            try:
-                detail_html = http_get(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{external_id}", timeout=18)
-                detail_text = clean_text(detail_html)
-                if detail_text:
-                    job["jd_text"] = detail_text
-            except Exception as exc:
-                failures.append(f"LinkedIn detail {external_id}: {exc}")
+            if not detail_limited:
+                try:
+                    detail_html = http_get(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{external_id}", timeout=18)
+                    detail_text = clean_text(detail_html)
+                    if detail_text:
+                        job["jd_text"] = detail_text
+                except Exception as exc:
+                    detail_failures.append(f"LinkedIn detail {external_id}: {exc}")
+                    if any(token in str(exc).lower() for token in ["429", "too many requests", "403", "forbidden"]):
+                        detail_limited = True
             job["region"] = code
             job["city"] = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
             job["source_region"] = code
             if code != "SG":
                 job["location"] = job.get("location") or location
             jobs.append(job)
+    if detail_failures:
+        sparse_job_count = sum(len(clean_text(job.get("jd_text") or "")) < 500 for job in jobs)
+        enriched_job_count = enrich_linkedin_jobs_from_public_pages(jobs)
+        if enriched_job_count < sparse_job_count:
+            failures.append(detail_failures[0])
     return jobs, failures
 
 
@@ -4084,14 +5423,28 @@ def fetch_internsg_jobs(limit: int, queries: list[str] | None = None) -> tuple[l
             if job_url in seen:
                 continue
             seen.add(job_url)
-            try:
-                detail_html = http_get(job_url, timeout=18)
-                detail_text = clean_text(detail_html)
-                if detail_text:
-                    job["jd_text"] = detail_text[:12000]
-            except Exception as exc:
-                failures.append(f"InternSG detail {job.get('position')}: {exc}")
             jobs.append(job)
+
+    def fetch_detail(index_job: tuple[int, dict]) -> tuple[int, str, str]:
+        index, job = index_job
+        try:
+            detail_html = http_get(job.get("url", ""), timeout=18)
+            return index, parse_internsg_detail_text(detail_html)[:12000], ""
+        except Exception as exc:
+            return index, "", f"InternSG detail {job.get('position')}: {exc}"
+
+    details: dict[int, tuple[str, str]] = {}
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(jobs)))) as executor:
+        futures = [executor.submit(fetch_detail, item) for item in enumerate(jobs)]
+        for future in as_completed(futures):
+            index, detail_text, failure = future.result()
+            details[index] = (detail_text, failure)
+    for index, job in enumerate(jobs):
+        detail_text, failure = details.get(index, ("", ""))
+        if detail_text:
+            job["jd_text"] = detail_text
+        if failure:
+            failures.append(failure)
     return jobs, failures
 
 
@@ -4121,7 +5474,7 @@ def fetch_indeed_jobs(
         if len(failures) >= failure_limit:
             failures.append("Indeed 受限：连续失败较多，已跳过剩余查询。")
             break
-        url = f"https://{host}/jobs?q={quote_plus(query)}&l={quote_plus(location)}&fromage=7&sort=date"
+        url = indeed_search_url(host, query, location)
         try:
             html = http_get(url, timeout=8, retries=0)
         except Exception as exc:
@@ -4140,6 +5493,36 @@ def fetch_indeed_jobs(
             if code != "SG":
                 job["location"] = job.get("location") or location
             jobs.append(job)
+    if len(jobs) < limit:
+        browser_jobs, browser_failures = fetch_indeed_jobs_with_browser(
+            limit - len(jobs),
+            query_list,
+            code,
+            max(8, time_budget_seconds),
+        )
+        if browser_jobs:
+            failures = []
+        else:
+            failures.extend(browser_failures)
+        for job in browser_jobs:
+            job_url = job.get("url", "")
+            if job_url in seen:
+                continue
+            seen.add(job_url)
+            jobs.append(job)
+            if len(jobs) >= limit:
+                break
+    if len(jobs) < limit and (not jobs or os.environ.get("SERPAPI_KEY")):
+        api_jobs, api_failures = fetch_indeed_jobs_via_google_jobs(limit - len(jobs), query_list, code)
+        failures.extend(api_failures)
+        for job in api_jobs:
+            job_url = job.get("url", "")
+            if job_url in seen:
+                continue
+            seen.add(job_url)
+            jobs.append(job)
+            if len(jobs) >= limit:
+                break
     return jobs, failures
 
 
@@ -4149,6 +5532,7 @@ def fetch_jobstreet_jobs(
     region: str | None = None,
     time_budget_seconds: float = 24,
     failure_limit: int = 3,
+    use_html_fallback: bool = True,
 ) -> tuple[list[dict], list[str]]:
     code = active_region_code(region)
     if code != "SG":
@@ -4157,7 +5541,9 @@ def fetch_jobstreet_jobs(
     failures: list[str] = []
     seen: set[str] = set()
     started = time.monotonic()
-    for query in (queries or TARGET_QUERIES):
+    query_list = queries or TARGET_QUERIES
+    query_cap = max(1, (limit + len(query_list) - 1) // max(1, len(query_list)))
+    for query in query_list:
         if len(jobs) >= limit:
             break
         if time.monotonic() - started > time_budget_seconds:
@@ -4167,8 +5553,14 @@ def fetch_jobstreet_jobs(
             failures.append("JobStreet 受限：连续失败较多，已跳过剩余查询。")
             break
         query_jobs: list[dict] = []
-        for url in jobstreet_search_urls(query):
-            if len(query_jobs) >= max(1, limit // max(1, len(queries or TARGET_QUERIES))):
+        api_url = jobstreet_api_search_url(query)
+        try:
+            payload = json.loads(http_get(api_url, timeout=8, retries=0))
+            query_jobs.extend(parse_jobstreet_api_jobs(payload, query, query_cap))
+        except Exception as exc:
+            failures.append(f"JobStreet API {query}: {exc}")
+        for url in jobstreet_search_urls(query) if use_html_fallback else []:
+            if len(query_jobs) >= query_cap:
                 break
             try:
                 html = http_get(url, timeout=8, retries=0)
@@ -4179,7 +5571,7 @@ def fetch_jobstreet_jobs(
             if parsed_jobs:
                 query_jobs.extend(parsed_jobs)
                 break
-        for job in query_jobs:
+        for job in query_jobs[:query_cap]:
             if len(jobs) >= limit:
                 break
             url = canonical_job_url("JobStreet", job.get("url", ""))
@@ -4187,18 +5579,67 @@ def fetch_jobstreet_jobs(
                 continue
             seen.add(url)
             job["url"] = url
-            try:
-                detail_html = http_get(url, timeout=6, retries=0)
-                detail_text = clean_text(detail_html)
-                if detail_text:
-                    job["jd_text"] = detail_text[:12000]
-            except Exception as exc:
-                failures.append(f"JobStreet detail {job.get('position')}: {exc}")
+            if not job.get("external_job_id"):
+                try:
+                    detail_html = http_get(url, timeout=6, retries=0)
+                    detail_text = clean_text(detail_html)
+                    if detail_text:
+                        job["jd_text"] = detail_text[:12000]
+                except Exception as exc:
+                    failures.append(f"JobStreet detail {job.get('position')}: {exc}")
             job["region"] = code
             job["city"] = "Singapore"
             job["source_region"] = code
             jobs.append(job)
     return jobs, failures
+
+
+def watched_company_scan_items(region: str, limit: int = 24) -> list[dict]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            select * from watch_companies
+            where region=? and status='Watch'
+            order by priority desc, company
+            limit ?
+            """,
+            (active_region_code(region), limit),
+        ).fetchall()
+    return [company_item_from_row(row_to_dict(row)) for row in rows]
+
+
+def fetch_watched_company_public_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], []
+    companies = watched_company_scan_items(code)
+    if not companies:
+        return [], []
+    queries = [item.get("company") or "" for item in companies if item.get("company")]
+    raw_jobs, failures = fetch_jobstreet_jobs(
+        max(limit * 2, len(queries) * 3),
+        queries,
+        code,
+        time_budget_seconds=18,
+        failure_limit=3,
+        use_html_fallback=False,
+    )
+    matches_by_company: list[list[dict]] = [[] for _item in companies]
+    for job in raw_jobs:
+        for index, item in enumerate(companies):
+            if match_job_to_company(job, item.get("company") or "", item)[0]:
+                matches_by_company[index].append(job)
+                break
+    matched: list[dict] = []
+    round_index = 0
+    while len(matched) < limit and any(round_index < len(items) for items in matches_by_company):
+        for items in matches_by_company:
+            if round_index < len(items):
+                matched.append(items[round_index])
+                if len(matched) >= limit:
+                    break
+        round_index += 1
+    return matched, failures
 
 
 def merge_fetch_results(fetch_calls: list[tuple[int, object]], limit: int) -> tuple[list[dict], list[str]]:
@@ -4224,6 +5665,32 @@ def merge_fetch_results(fetch_calls: list[tuple[int, object]], limit: int) -> tu
             if len(jobs) >= limit:
                 break
     return jobs, failures
+
+
+def summarize_scan_source_failures(source_name: str, failures: list[str], saved_count: int) -> list[str]:
+    unique = list(dict.fromkeys(str(item) for item in failures if str(item).strip()))
+    if "LinkedIn" not in source_name:
+        return unique
+    rate_limited = [
+        item for item in unique
+        if any(token in item.lower() for token in ["429", "too many requests", "403", "forbidden"])
+    ]
+    if not rate_limited:
+        return unique
+    other = [item for item in unique if item not in rate_limited]
+    return [
+        *other,
+        f"LinkedIn 限流：详情或部分关键词请求受限；已保留 {saved_count} 条列表结果，本轮已停止重复请求。",
+    ]
+
+
+def is_nonblocking_scan_warning(source_name: str, error: str, saved_count: int) -> bool:
+    lowered = (error or "").lower()
+    return (
+        "linkedin" in (source_name or "").lower()
+        and saved_count >= SOURCE_LIMITS["LinkedIn"]
+        and any(token in lowered for token in ["429", "too many requests", "403", "forbidden", "限流"])
+    )
 
 
 def fetch_linkedin_jobs_with_ai(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
@@ -4281,8 +5748,16 @@ def company_job_record(
     source: str = "Company Site",
     location: str | None = None,
 ) -> dict | None:
-    position = clean_text(title)[:180]
-    if not position or not COMPANY_SCAN_ROLE_PATTERN.search(f"{position} {description} {focus}"):
+    raw_position = clean_text(title)
+    position = raw_position[:180]
+    normalized_company = normalize_company_phrase(company)
+    if (
+        not is_actionable_job_title(position)
+        or len(raw_position) > 120
+        or not COMPANY_SCAN_TITLE_ROLE_PATTERN.search(position)
+        or (normalized_company in COMPANIES_REQUIRE_EXPLICIT_LOCATION and not location)
+        or (location and not location_matches_region(location, region, city))
+    ):
         return None
     job_url = absolute_url(source_url, url)
     if not job_url.startswith("http"):
@@ -4336,7 +5811,7 @@ def parse_company_jsonld_jobs(html: str, base_url: str, company: str, focus: str
             if not any(str(value).lower() == "jobposting" for value in types):
                 continue
             title = item.get("title") or item.get("name") or ""
-            location_value = city
+            location_value = ""
             job_location = item.get("jobLocation")
             if isinstance(job_location, dict):
                 address = job_location.get("address") or {}
@@ -4374,8 +5849,8 @@ def parse_company_anchor_jobs(html: str, page_url: str, company: str, focus: str
 
 def extract_embedded_ats_links(html: str, base_url: str) -> list[str]:
     links: list[str] = []
-    for raw in re.findall(r'https?://[^"\'\s<>]+', html or "", flags=re.I):
-        cleaned = raw.rstrip(").,;")
+    for raw in re.findall(r'https?://[^"\'\s<>()]+', html or "", flags=re.I):
+        cleaned = unescape(raw).replace("\\/", "/").rstrip("\\).,;")
         if COMPANY_CAREER_LINK_PATTERN.search(cleaned):
             links.append(cleaned)
     for href, label in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html or "", flags=re.I | re.S):
@@ -4404,9 +5879,15 @@ def extract_embedded_ats_links(html: str, base_url: str) -> list[str]:
         "wise.jobs",
     )
     for link in links:
+        if any(token in link.lower() for token in [");", "background:", "background-", "{", "}"]):
+            continue
         parsed_link = urlparse(link)
         host = parsed_link.netloc.lower().removeprefix("www.")
         if not parsed_link.scheme.startswith("http"):
+            continue
+        if parsed_link.path.lower().startswith(("/wp-json/", "/wp-content/", "/wp-includes/")):
+            continue
+        if re.search(r"\.(?:avif|gif|jpe?g|png|svg|webp|css|js|woff2?|ttf|ico)$", parsed_link.path, flags=re.I):
             continue
         if host != base_host and not any(ats in host for ats in ats_hosts):
             continue
@@ -4453,6 +5934,18 @@ def smartrecruiters_company_token(url: str) -> str:
     return parts[0] if len(parts) >= 1 and parts[0].lower() != "job" else ""
 
 
+def smartrecruiters_public_job_url(item: dict, company_token: str) -> str:
+    if item.get("postingUrl") or item.get("applyUrl"):
+        return item.get("postingUrl") or item.get("applyUrl")
+    posting_id = clean_text(item.get("id") or "")
+    if not posting_id:
+        return item.get("ref") or ""
+    company_data = item.get("company") if isinstance(item.get("company"), dict) else {}
+    identifier = clean_text(company_data.get("identifier") or company_token)
+    slug = re.sub(r"[^a-z0-9]+", "-", clean_text(item.get("name") or "").lower()).strip("-") or "job"
+    return f"https://jobs.smartrecruiters.com/{identifier}/{posting_id}-{slug}"
+
+
 def workable_account_token(url: str) -> str:
     parsed = urlparse(url)
     if "apply.workable.com" not in parsed.netloc:
@@ -4463,20 +5956,74 @@ def workable_account_token(url: str) -> str:
     return parts[0]
 
 
+def workday_board_parts(url: str) -> tuple[str, str, str] | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if not any(domain in host for domain in ["myworkdayjobs.com", "workdayjobs.com"]):
+        return None
+    tenant = host.split(".", 1)[0]
+    parts = [part for part in parsed.path.split("/") if part]
+    if parts and re.fullmatch(r"[a-z]{2}-[a-z]{2}", parts[0], flags=re.I):
+        parts = parts[1:]
+    if not tenant or not parts:
+        return None
+    origin = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    return origin, tenant, parts[0]
+
+
 def location_matches_region(location_text: str, region: str, city: str) -> bool:
     text = clean_text(location_text).lower()
     if not text:
         return True
     if "remote" in text:
         return True
-    region_terms = {
-        "SG": ["singapore", "sg"],
-        "CN": ["china", "mainland", "beijing", "shanghai", "shenzhen", "hangzhou", "guangzhou"],
-        "HK": ["hong kong", "hong kong sar", "hk"],
-    }.get(region, [])
-    if city:
-        region_terms.append(city.lower())
-    return any(term and term in text for term in region_terms)
+    sg_terms = ["singapore", " sg ", "sgp"]
+    hk_terms = ["hong kong", "hong kong sar", " hk "]
+    cn_cities = ["beijing", "shanghai", "shenzhen", "hangzhou", "guangzhou", "chengdu", "nanjing", "suzhou", "wuhan", "xiamen"]
+    cn_terms = ["china", "mainland", *cn_cities]
+    other_terms = [
+        "united states", "usa", "u.s.", "new york", "california", "san francisco",
+        "india", "bangalore", "bengaluru", "hyderabad", "united kingdom", "london",
+        "europe", "germany", "berlin", "france", "paris", "australia", "sydney",
+        "melbourne", "canada", "toronto", "japan", "tokyo", "korea", "seoul",
+        "taiwan", "taipei", "vietnam", "ho chi minh", "indonesia", "jakarta",
+        "malaysia", "kuala lumpur", "thailand", "bangkok", "philippines", "manila",
+    ]
+
+    padded = f" {text} "
+    if region == "SG":
+        if any(term in padded for term in sg_terms):
+            return True
+        return not any(term in padded for term in [*hk_terms, *cn_terms, *other_terms])
+    if region == "HK":
+        if any(term in padded for term in hk_terms):
+            return True
+        return not any(term in padded for term in [*sg_terms, *cn_terms, *other_terms])
+    if region == "CN":
+        selected_city = clean_text(city).lower()
+        if selected_city and selected_city in text:
+            return True
+        if any(term in padded for term in [*sg_terms, *hk_terms, *other_terms]):
+            return False
+        if any(term in text for term in cn_cities):
+            return False
+        return not any(term in text for term in ["china", "mainland"])
+    return True
+
+
+def explicit_ats_location_matches_region(location_text: str, region: str, city: str) -> bool:
+    text = clean_text(location_text).lower()
+    if not text:
+        return False
+    padded = f" {text} "
+    if region == "SG":
+        return "singapore" in text or bool(re.search(r"\bsg\b", padded))
+    if region == "HK":
+        return "hong kong" in text or bool(re.search(r"\bhk\b", padded))
+    if region == "CN":
+        selected_city = clean_text(city).lower()
+        return bool(selected_city and selected_city in text) or (not selected_city and ("china" in text or "mainland" in text))
+    return location_matches_region(location_text, region, city)
 
 
 def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city: str, limit: int) -> tuple[list[dict], list[str]]:
@@ -4488,10 +6035,14 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
     ashby = ashby_board_token(url)
     smartrecruiters = smartrecruiters_company_token(url)
     workable = workable_account_token(url)
+    workday = workday_board_parts(url)
     try:
         if greenhouse:
             payload = json.loads(http_get(f"https://boards-api.greenhouse.io/v1/boards/{greenhouse}/jobs?content=true", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
             for item in payload.get("jobs") or []:
+                location_text = (item.get("location") or {}).get("name") if isinstance(item.get("location"), dict) else ""
+                if not explicit_ats_location_matches_region(location_text, region, city):
+                    continue
                 append_company_job(
                     jobs,
                     seen,
@@ -4505,7 +6056,7 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                         url,
                         clean_text(item.get("content") or ""),
                         "Company Site / ATS",
-                        (item.get("location") or {}).get("name") if isinstance(item.get("location"), dict) else None,
+                        location_text,
                     ),
                     limit,
                 )
@@ -4513,6 +6064,9 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
             payload = json.loads(http_get(f"https://api.lever.co/v0/postings/{lever}?mode=json", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
             for item in payload if isinstance(payload, list) else []:
                 categories = item.get("categories") or {}
+                location_text = categories.get("location") if isinstance(categories, dict) else ""
+                if not explicit_ats_location_matches_region(location_text, region, city):
+                    continue
                 append_company_job(
                     jobs,
                     seen,
@@ -4526,13 +6080,16 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                         url,
                         item.get("descriptionPlain") or item.get("description") or "",
                         "Company Site / ATS",
-                        categories.get("location") if isinstance(categories, dict) else None,
+                        location_text,
                     ),
                     limit,
                 )
         elif ashby:
             payload = json.loads(http_get(f"https://api.ashbyhq.com/posting-api/job-board/{ashby}", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
             for item in payload.get("jobs") or []:
+                location_text = item.get("locationName") or item.get("location") or ""
+                if not explicit_ats_location_matches_region(location_text, region, city):
+                    continue
                 append_company_job(
                     jobs,
                     seen,
@@ -4546,30 +6103,64 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                         url,
                         item.get("descriptionHtml") or item.get("descriptionPlain") or "",
                         "Company Site / ATS",
-                        item.get("locationName") or item.get("location"),
+                        location_text,
                     ),
                     limit,
                 )
         elif smartrecruiters:
-            payload = json.loads(http_get(f"https://api.smartrecruiters.com/v1/companies/{smartrecruiters}/postings?limit=100", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
-            for item in payload.get("content") or []:
-                append_company_job(
-                    jobs,
-                    seen,
-                    company_job_record(
-                        company,
-                        item.get("name") or "",
-                        item.get("ref") or item.get("applyUrl") or url,
-                        region,
-                        city,
-                        focus,
-                        url,
-                        item.get("name") or "",
-                        "Company Site / ATS",
-                        ((item.get("location") or {}).get("city") if isinstance(item.get("location"), dict) else None) or city,
-                    ),
-                    limit,
-                )
+            offset = 0
+            for _page in range(5):
+                payload = json.loads(http_get(
+                    f"https://api.smartrecruiters.com/v1/companies/{smartrecruiters}/postings?limit=100&offset={offset}",
+                    timeout=COMPANY_SCAN_TIMEOUT,
+                    retries=0,
+                ))
+                postings = payload.get("content") or []
+                for item in postings:
+                    location = item.get("location") if isinstance(item.get("location"), dict) else {}
+                    employment = item.get("typeOfEmployment") if isinstance(item.get("typeOfEmployment"), dict) else {}
+                    experience = item.get("experienceLevel") if isinstance(item.get("experienceLevel"), dict) else {}
+                    department = item.get("department") if isinstance(item.get("department"), dict) else {}
+                    function = item.get("function") if isinstance(item.get("function"), dict) else {}
+                    location_text = re.sub(
+                        r",\s*,",
+                        ",",
+                        clean_text(location.get("fullLocation") or location.get("city") or ""),
+                    )
+                    if not explicit_ats_location_matches_region(location_text, region, city):
+                        continue
+                    metadata = "\n".join(
+                        value for value in [
+                            f"Employment: {clean_text(employment.get('label') or '')}" if employment.get("label") else "",
+                            f"Experience: {clean_text(experience.get('label') or '')}" if experience.get("label") else "",
+                            f"Department: {clean_text(department.get('label') or '')}" if department.get("label") else "",
+                            f"Function: {clean_text(function.get('label') or '')}" if function.get("label") else "",
+                        ]
+                        if value
+                    )
+                    append_company_job(
+                        jobs,
+                        seen,
+                        company_job_record(
+                            company,
+                            item.get("name") or "",
+                            smartrecruiters_public_job_url(item, smartrecruiters) or url,
+                            region,
+                            city,
+                            focus,
+                            url,
+                            metadata or item.get("name") or "",
+                            "Company Site / ATS",
+                            location_text,
+                        ),
+                        limit,
+                    )
+                    if len(jobs) >= limit:
+                        break
+                total = int(payload.get("totalFound") or len(postings))
+                offset += int(payload.get("limit") or 100)
+                if len(jobs) >= limit or not postings or offset >= total:
+                    break
         elif workable:
             payload = json.loads(http_get(f"https://apply.workable.com/api/v1/widget/accounts/{workable}?details=true", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
             for item in payload.get("jobs") or []:
@@ -4580,7 +6171,7 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                     if isinstance(location, dict)
                 )
                 location_text = location_text or clean_text(" ".join(str(item.get(key) or "") for key in ["city", "state", "country"]))
-                if not location_matches_region(location_text, region, city):
+                if not explicit_ats_location_matches_region(location_text, region, city):
                     continue
                 append_company_job(
                     jobs,
@@ -4596,6 +6187,92 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                         item.get("description") or "",
                         "Company Site / ATS",
                         location_text or city,
+                    ),
+                    limit,
+                )
+        elif workday:
+            origin, tenant, site = workday
+            api_root = f"{origin}/wday/cxs/{tenant}/{site}"
+            seen_paths: set[str] = set()
+            listing_items: list[tuple[dict, str, str, str]] = []
+            for search_term in ["intern", "graduate", ""]:
+                if len(listing_items) >= limit:
+                    break
+                offset = 0
+                for _page in range(5):
+                    payload = http_post_json(
+                        f"{api_root}/jobs",
+                        {
+                            "appliedFacets": {},
+                            "limit": 20,
+                            "offset": offset,
+                            "searchText": search_term,
+                        },
+                        timeout=COMPANY_SCAN_TIMEOUT,
+                    )
+                    postings = payload.get("jobPostings") if isinstance(payload, dict) else []
+                    if not isinstance(postings, list) or not postings:
+                        break
+                    for item in postings:
+                        title = clean_text(item.get("title") or "")
+                        external_path = item.get("externalPath") or ""
+                        location_text = clean_text(item.get("locationsText") or "")
+                        if not external_path or external_path in seen_paths:
+                            continue
+                        if not explicit_ats_location_matches_region(location_text, region, city):
+                            continue
+                        employment = detect_employment_type(title, "", "")
+                        if search_term == "intern" and employment != "Internship":
+                            continue
+                        if search_term == "graduate" and employment != "Graduate":
+                            continue
+                        seen_paths.add(external_path)
+                        listing_items.append((item, external_path, title, location_text))
+                        if len(listing_items) >= limit:
+                            break
+                    if len(listing_items) >= limit:
+                        break
+                    offset += len(postings)
+                    if offset >= int(payload.get("total") or 0):
+                        break
+
+            def fetch_workday_detail(entry: tuple[dict, str, str, str]) -> tuple[dict, str, str, str]:
+                item, external_path, title, location_text = entry
+                try:
+                    detail = json.loads(http_get(f"{api_root}{external_path}", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+                except Exception:
+                    detail = {}
+                info = detail.get("jobPostingInfo") if isinstance(detail, dict) else {}
+                return (info if isinstance(info, dict) else {}, external_path, title, location_text)
+
+            with ThreadPoolExecutor(max_workers=min(6, len(listing_items) or 1)) as detail_executor:
+                detail_rows = list(detail_executor.map(fetch_workday_detail, listing_items))
+            for (item, _external_path, _title, _location_text), (info, external_path, title, location_text) in zip(listing_items, detail_rows):
+                detail_location = clean_text(info.get("location") or location_text)
+                metadata = "\n".join(
+                    value for value in [
+                        clean_text(info.get("jobDescription") or ""),
+                        f"Employment: {clean_text(info.get('timeType') or '')}" if info.get("timeType") else "",
+                        f"Posted: {clean_text(item.get('postedOn') or '')}" if item.get("postedOn") else "",
+                        f"Requisition: {clean_text(info.get('jobReqId') or '')}" if info.get("jobReqId") else "",
+                    ]
+                    if value
+                )
+                public_url = info.get("externalUrl") or f"{origin}/{site}{external_path}"
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        info.get("title") or title,
+                        public_url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        metadata,
+                        "Company Site / ATS",
+                        detail_location,
                     ),
                     limit,
                 )
@@ -4622,19 +6299,35 @@ def fetch_company_site_jobs(limit: int, region: str | None = None) -> tuple[list
     code = active_region_code(region)
     city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
     with get_db() as conn:
-        companies = conn.execute(
+        companies = [row_to_dict(row) for row in conn.execute(
             """
-            select company, url, focus, region
+            select company, url, focus, region, last_checked_at, last_scan_status
             from watch_companies
             where region=? and status='Watch'
             order by priority desc, company
             """,
             (code,),
-        ).fetchall()
+        ).fetchall()]
+    scan_now = dt.datetime.now()
+    active_companies: list[dict] = []
+    for company in companies:
+        checked_at = company.get("last_checked_at") or ""
+        try:
+            checked_time = dt.datetime.fromisoformat(checked_at)
+        except ValueError:
+            checked_time = None
+        on_cooldown = (
+            company.get("last_scan_status") in {"failed", "limited"}
+            and checked_time is not None
+            and (scan_now - checked_time).total_seconds() < 6 * 60 * 60
+        )
+        if not on_cooldown:
+            active_companies.append(company)
+    companies = active_companies
     per_company = max(2, min(COMPANY_SCAN_PER_COMPANY_CAP, (limit // max(1, len(companies))) + 1))
-    for row in companies:
-        if len(jobs) >= limit:
-            break
+
+    def scan_company(index_row: tuple[int, dict]) -> tuple[int, list[dict], list[str], str, str]:
+        index, row = index_row
         company = row["company"]
         base_url = row["url"]
         company_jobs: list[dict] = []
@@ -4643,11 +6336,9 @@ def fetch_company_site_jobs(limit: int, region: str | None = None) -> tuple[list
         try:
             html = http_get(base_url, timeout=COMPANY_SCAN_TIMEOUT, retries=0)
         except Exception as exc:
-            message = f"{company}: {exc}"
-            failures.append(message)
-            update_company_scan_result(company, code, "failed", "官网访问失败，已保留公共来源匹配。", 0)
-            continue
+            return index, [], [f"{company}: {exc}"], "failed", "官网访问失败，已保留公共来源匹配。"
         pages = [base_url, *extract_embedded_ats_links(html, base_url)]
+        child_page_misses = 0
         for page_url in pages[:COMPANY_SCAN_PAGE_CAP]:
             if len(company_jobs) >= per_company:
                 break
@@ -4661,70 +6352,207 @@ def fetch_company_site_jobs(limit: int, region: str | None = None) -> tuple[list
             if page_url != base_url:
                 try:
                     page_html = http_get(page_url, timeout=COMPANY_SCAN_TIMEOUT, retries=0)
-                except Exception as exc:
-                    company_failures.append(f"{company} {page_url}: {exc}")
+                except Exception:
+                    child_page_misses += 1
+                    if child_page_misses >= 2:
+                        break
                     continue
             for job in parse_company_jsonld_jobs(page_html, page_url, company, row["focus"], code, city, per_company - len(company_jobs)):
                 append_company_job(company_jobs, seen_urls, job, per_company)
             for job in parse_company_anchor_jobs(page_html, page_url, company, row["focus"], code, city, per_company - len(company_jobs)):
                 append_company_job(company_jobs, seen_urls, job, per_company)
-        jobs.extend(company_jobs[: max(0, limit - len(jobs))])
         if company_jobs:
-            update_company_scan_result(company, code, "success", f"官网/ATS 本次找到 {len(company_jobs)} 个可识别岗位。", len(company_jobs))
-        elif company_failures:
-            failures.extend(company_failures[:3])
-            update_company_scan_result(company, code, "limited", "官网部分页面访问受限，公共来源匹配会继续补充。", 0)
-        else:
-            update_company_scan_result(company, code, "empty", "官网未暴露可识别岗位列表，公共来源匹配会继续补充。", 0)
+            return index, company_jobs, [], "success", f"官网/ATS 本次找到 {len(company_jobs)} 个可识别岗位。"
+        if company_failures:
+            return index, [], company_failures[:3], "limited", "官网部分页面访问受限，公共来源匹配会继续补充。"
+        return index, [], [], "empty", "官网未暴露可识别岗位列表，公共来源匹配会继续补充。"
+
+    results: dict[int, tuple[list[dict], list[str], str, str]] = {}
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(companies)))) as executor:
+        futures = [executor.submit(scan_company, item) for item in enumerate(companies)]
+        for future in as_completed(futures):
+            index, company_jobs, company_failures, status, note = future.result()
+            results[index] = (company_jobs, company_failures, status, note)
+
+    for index, row in enumerate(companies):
+        company_jobs, company_failures, status, note = results.get(index, ([], [f"{row['company']}: 扫描未返回。"], "failed", "官网扫描未返回，已保留公共来源匹配。"))
+        jobs.extend(company_jobs[: max(0, limit - len(jobs))])
+        failures.extend(company_failures)
+        update_company_scan_result(row["company"], code, status, note, len(company_jobs))
     return jobs, failures
 
 
-def generic_public_search_jobs(source: str, base_urls: list[str], limit: int, region: str) -> tuple[list[dict], list[str]]:
-    code = active_region_code(region)
-    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
+def classify_public_job_link(url: str, title: str, context_text: str, region: str) -> str | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().removeprefix("www.")
+    path = parsed.path.lower().rstrip("/")
+    title_lower = clean_text(title).lower()
+    context_lower = clean_text(context_text).lower()
+    if not title_lower or any(title_lower.startswith(prefix) for prefix in ["view all", "see all", "browse", "explore", "search"]):
+        return None
+    if host.endswith("mycareersfuture.gov.sg"):
+        return "MyCareersFuture" if path.startswith("/job/") else None
+    if host.endswith("glints.com"):
+        if "/opportunities/jobs/" in path and not path.endswith("/explore"):
+            return "Glints"
+        return None
+    if host.endswith("nodeflair.com"):
+        return "NodeFlair" if re.search(r"/jobs/[^/?]*\d+", path) else None
+    if host.endswith("wellfound.com"):
+        if not re.fullmatch(r"/jobs/\d+-[^/]+", path):
+            return None
+        return "Wellfound" if region == "SG" and "singapore" in context_lower else None
+    return None
+
+
+def public_card_company(container, title: str) -> str:
+    company_node = container.select_one('[data-company-name], [data-testid*="company"], [class*="company"], [class*="Company"]')
+    if company_node:
+        company = clean_text(company_node.get_text(" ", strip=True))
+        if company and company.lower() != title.lower():
+            return company[:140]
+    title_lower = clean_text(title).lower()
+    blocked = {
+        title_lower,
+        "singapore",
+        "remote",
+        "hybrid",
+        "apply",
+        "apply now",
+        "view job",
+        "save",
+    }
+    for value in container.stripped_strings:
+        candidate = clean_text(str(value))
+        lowered = candidate.lower()
+        if not candidate or lowered in blocked or lowered.startswith("sgd "):
+            continue
+        if re.fullmatch(r"(?:singapore|remote|hybrid)(?:,?\s+singapore)?", lowered):
+            continue
+        if 2 <= len(candidate) <= 140:
+            return candidate
+    return ""
+
+
+def parse_public_search_jobs_from_html(
+    html: str,
+    page_url: str,
+    source: str,
+    region: str,
+    city: str,
+    limit: int,
+) -> list[dict]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return []
+    soup = BeautifulSoup(html or "", "html.parser")
     jobs: list[dict] = []
-    failures: list[str] = []
+    seen: set[str] = set()
+    fallback_sources = {"Mainland Public Search", "JobsDB"}
     role_pattern = re.compile(
         r"\b(intern|internship|graduate|associate|junior|ux|user research|design|designer|product|operations|analyst|content|marketing|ai)\b",
         flags=re.I,
     )
-    seen: set[str] = set()
-    for query in region_queries(code):
+    for anchor in soup.find_all("a", href=True):
         if len(jobs) >= limit:
             break
+        title = clean_text(anchor.get_text(" ", strip=True))
+        if len(title) < 8 or not role_pattern.search(title):
+            continue
+        job_url = absolute_url(page_url, anchor.get("href") or "")
+        if not job_url.startswith("http") or job_url in seen:
+            continue
+        container = anchor.find_parent(["article", "li"]) or anchor.parent
+        context_text = clean_text(container.get_text(" ", strip=True)) if container else title
+        channel = classify_public_job_link(job_url, title, context_text, region)
+        if channel is None and source not in fallback_sources:
+            continue
+        channel = channel or source
+        company = public_card_company(container, title) if container else ""
+        if not company and source not in fallback_sources:
+            continue
+        seen.add(job_url)
+        jobs.append(
+            {
+                "company": company or source,
+                "position": title[:180],
+                "source": channel,
+                "url": job_url,
+                "location": city,
+                "region": region,
+                "city": city,
+                "source_region": region,
+                "job_type": "Public search",
+                "jd_text": f"{channel} public search match\nTitle: {title}\nCompany: {company or source}\nLocation: {city}\nURL: {job_url}\nContext: {context_text[:1200]}",
+            }
+        )
+    return jobs
+
+
+def public_search_unavailable_reason(html: str) -> str:
+    text = clean_text(html).lower()
+    if "temporarily unable to search for jobs" in text:
+        return "limited: site reports that job search is temporarily unavailable"
+    if "service temporarily unavailable" in text or "temporarily unavailable" in text:
+        return "limited: site is temporarily unavailable"
+    return ""
+
+
+def generic_public_search_jobs(
+    source: str,
+    base_urls: list[str],
+    limit: int,
+    region: str,
+    time_budget_seconds: float = 35,
+    host_failure_limit: int = 2,
+    unparseable_page_is_limited: bool = False,
+) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
+    jobs: list[dict] = []
+    failures: list[str] = []
+    seen: set[str] = set()
+    started = time.monotonic()
+    host_failures: dict[str, int] = {}
+    blocked_hosts: set[str] = set()
+    source_hosts = {urlparse(template).netloc.lower() for template in base_urls}
+
+    def record_failure(host: str, query: str, detail: object) -> None:
+        failures.append(f"{source} {host} {query}: {detail}")
+        host_failures[host] = host_failures.get(host, 0) + 1
+        if host_failures[host] >= host_failure_limit:
+            blocked_hosts.add(host)
+
+    for query in region_queries(code):
+        if len(jobs) >= limit or time.monotonic() - started >= time_budget_seconds or blocked_hosts == source_hosts:
+            break
         for template in base_urls:
-            if len(jobs) >= limit:
+            if len(jobs) >= limit or time.monotonic() - started >= time_budget_seconds:
                 break
             url = template.format(query=quote_plus(query), city=quote_plus(city))
-            try:
-                html = http_get(url, timeout=22, retries=1)
-            except Exception as exc:
-                failures.append(f"{source} {query}: {exc}")
+            host = urlparse(url).netloc.lower()
+            if host in blocked_hosts:
                 continue
-            for href, label in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, flags=re.I | re.S):
-                if len(jobs) >= limit:
-                    break
-                title = clean_text(label)
-                if len(title) < 8 or not role_pattern.search(title):
+            try:
+                html = http_get(url, timeout=10, retries=0)
+            except Exception as exc:
+                record_failure(host, query, exc)
+                continue
+            unavailable_reason = public_search_unavailable_reason(html)
+            if unavailable_reason:
+                record_failure(host, query, unavailable_reason)
+                continue
+            parsed_jobs = parse_public_search_jobs_from_html(html, url, source, code, city, limit - len(jobs))
+            if unparseable_page_is_limited and not parsed_jobs:
+                record_failure(host, query, "limited: public response contains no parseable job cards")
+                continue
+            for job in parsed_jobs:
+                if job["url"] in seen:
                     continue
-                job_url = absolute_url(url, href)
-                if not job_url.startswith("http") or job_url in seen:
-                    continue
-                seen.add(job_url)
-                jobs.append(
-                    {
-                        "company": source,
-                        "position": title[:180],
-                        "source": source,
-                        "url": job_url,
-                        "location": city,
-                        "region": code,
-                        "city": city,
-                        "source_region": code,
-                        "job_type": "Public search",
-                        "jd_text": f"{source} public search match\nQuery: {query}\nTitle/link text: {title}\nURL: {job_url}",
-                    }
-                )
+                seen.add(job["url"])
+                job["jd_text"] += f"\nQuery: {query}"
+                jobs.append(job)
             if jobs:
                 break
     return jobs[:limit], failures
@@ -4754,14 +6582,685 @@ def fetch_jobsdb_hk_jobs(limit: int) -> tuple[list[dict], list[str]]:
     )
 
 
+def parse_mycareersfuture_api_jobs(payload: dict, limit: int) -> list[dict]:
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for item in payload.get("results") or []:
+        if len(jobs) >= limit or not isinstance(item, dict):
+            break
+        job_id = clean_text(item.get("uuid") or "")
+        title = clean_text(item.get("title") or "")
+        status_data = item.get("status")
+        status = clean_text(
+            status_data.get("jobStatus") if isinstance(status_data, dict) else status_data or ""
+        ).lower()
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        expiry_date = clean_text(metadata.get("expiryDate") or "")[:10]
+        address = item.get("address") if isinstance(item.get("address"), dict) else {}
+        employment_types = [
+            clean_text(value.get("employmentType") or "")
+            for value in (item.get("employmentTypes") or [])
+            if isinstance(value, dict) and value.get("employmentType")
+        ]
+        if (
+            not job_id
+            or not is_actionable_job_title(title)
+            or status in {"closed", "expired", "deleted"}
+            or (expiry_date and expiry_date < today())
+            or bool(address.get("isOverseas"))
+            or (employment_types and not any("internship" in value.lower() for value in employment_types))
+        ):
+            continue
+        if not employment_types and detect_employment_type(title, clean_text(item.get("description") or ""), "") not in {"Internship", "Graduate"}:
+            continue
+        company_data = item.get("hiringCompany") if isinstance(item.get("hiringCompany"), dict) else None
+        company_data = company_data or (item.get("postedCompany") if isinstance(item.get("postedCompany"), dict) else {})
+        company = clean_text(company_data.get("name") or "")
+        if not is_actionable_company_name(company, title):
+            continue
+        job_url = clean_text(metadata.get("jobDetailsUrl") or "") or f"https://www.mycareersfuture.gov.sg/job/{job_id}"
+        if job_url in seen:
+            continue
+        seen.add(job_url)
+        districts = [
+            clean_text(value.get("location") or "")
+            for value in (address.get("districts") or [])
+            if isinstance(value, dict) and value.get("location")
+        ]
+        location = "Singapore" + (f" · {districts[0]}" if districts else "")
+        salary = item.get("salary") if isinstance(item.get("salary"), dict) else {}
+        salary_type = salary.get("type") if isinstance(salary.get("type"), dict) else {}
+
+        def salary_number(value) -> str:
+            try:
+                number = float(value)
+                return str(int(number)) if number.is_integer() else f"{number:g}"
+            except (TypeError, ValueError):
+                return ""
+
+        minimum_salary = salary_number(salary.get("minimum"))
+        maximum_salary = salary_number(salary.get("maximum"))
+        salary_parts = [value for value in [minimum_salary, maximum_salary] if value]
+        salary_text = ""
+        if salary_parts:
+            salary_range = " - ".join(dict.fromkeys(salary_parts))
+            salary_text = f"SGD {salary_range} {clean_text(salary_type.get('salaryType') or '')}".strip()
+        position_levels = [
+            clean_text(value.get("position") or "")
+            for value in (item.get("positionLevels") or [])
+            if isinstance(value, dict) and value.get("position")
+        ]
+        skills = [
+            clean_text(value.get("skill") or "")
+            for value in (item.get("skills") or [])
+            if isinstance(value, dict) and value.get("skill")
+        ]
+        description = clean_text(item.get("description") or "")
+        jd_metadata = "\n".join(
+            value for value in [
+                f"Employment: {', '.join(employment_types)}" if employment_types else "",
+                f"Position level: {', '.join(position_levels)}" if position_levels else "",
+                f"Salary: {salary_text}" if salary_text else "",
+                f"Minimum experience: {item.get('minimumYearsExperience')} years" if item.get("minimumYearsExperience") is not None else "",
+                f"Skills: {', '.join(skills[:20])}" if skills else "",
+                f"Posted: {clean_text(metadata.get('newPostingDate') or metadata.get('originalPostingDate') or '')}",
+                f"Expires: {expiry_date}" if expiry_date else "",
+            ]
+            if value
+        )
+        jobs.append({
+            "company": company,
+            "position": title[:180],
+            "source": "MyCareersFuture",
+            "url": job_url,
+            "external_job_id": job_id,
+            "location": location,
+            "region": "SG",
+            "city": "Singapore",
+            "source_region": "SG",
+            "job_type": employment_types[0] if employment_types else "Internship",
+            "jd_text": f"{description}\n\n{jd_metadata}".strip(),
+        })
+    return jobs
+
+
+def fetch_mycareersfuture_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], ["MyCareersFuture connector is Singapore-only in this version."]
+    queries = [
+        "ai product intern",
+        "product design intern",
+        "user research intern",
+        "marketing intern",
+        "internship",
+    ]
+
+    def fetch_query(index_query: tuple[int, str]) -> tuple[int, list[dict], str | None]:
+        index, query = index_query
+        try:
+            payload = http_post_json(
+                "https://api.mycareersfuture.gov.sg/v2/search?limit=40&page=0",
+                {
+                    "search": query,
+                    "sortBy": ["new_posting_date"],
+                    "sessionId": str(uuid.uuid4()),
+                    "employmentTypes": ["Internship/Attachment"],
+                },
+                timeout=12,
+            )
+            return index, parse_mycareersfuture_api_jobs(payload, 40), None
+        except Exception as exc:
+            return index, [], f"MyCareersFuture {query}: limited: public API request failed ({exc})"
+
+    results: dict[int, list[dict]] = {}
+    failures: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(queries)) as executor:
+        futures = [executor.submit(fetch_query, item) for item in enumerate(queries)]
+        for future in as_completed(futures):
+            index, query_jobs, failure = future.result()
+            results[index] = query_jobs
+            if failure:
+                failures.append(failure)
+
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    round_index = 0
+    while len(jobs) < limit and any(round_index < len(results.get(index, [])) for index in range(len(queries))):
+        for index in range(len(queries)):
+            query_jobs = results.get(index, [])
+            if round_index >= len(query_jobs):
+                continue
+            job = query_jobs[round_index]
+            key = canonical_job_url(job.get("source") or "", job.get("url") or "", job.get("external_job_id"))
+            if key and key not in seen:
+                seen.add(key)
+                jobs.append(job)
+                if len(jobs) >= limit:
+                    break
+        round_index += 1
+    return jobs, failures
+
+
+CAREERS_GOV_QUERIES = [
+    "product intern",
+    "design intern",
+    "user research intern",
+    "AI intern",
+    "marketing intern",
+    "internship",
+]
+CAREERS_GOV_ALGOLIA_URL = "https://3ow7d8b4iz-dsn.algolia.net/1/indexes/job_index/query"
+CAREERS_GOV_ALGOLIA_APP_ID = "3OW7D8B4IZ"
+CAREERS_GOV_ALGOLIA_SEARCH_KEY = "32fa71d8b0bc06be1e6395bf8c430107"
+
+
+def careers_gov_job_url(object_id: str, job_source: str = "") -> str:
+    raw = clean_text(object_id)
+    if ":" in raw:
+        prefix, identifier = raw.split(":", 1)
+    else:
+        prefix, identifier = job_source, raw
+    prefix = clean_text(job_source or prefix).lower()
+    identifier = identifier.strip("/")
+    if not prefix or not identifier:
+        return ""
+    return f"https://jobs.careers.gov.sg/jobs/{quote(prefix, safe='')}/{quote(identifier, safe='/')}"
+
+
+def parse_careers_gov_algolia_jobs(payload: dict, query: str, limit: int) -> list[dict]:
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for item in payload.get("hits") or []:
+        if len(jobs) >= limit or not isinstance(item, dict):
+            break
+        position = clean_text(item.get("title") or "")
+        company = clean_text(item.get("agency") or item.get("agencyAbbr") or "")
+        employment_label = clean_text(item.get("employmentType") or "")
+        employment_lower = employment_label.lower()
+        if "intern" in employment_lower:
+            employment_type = "Internship"
+        elif "trainee" in employment_lower or "graduate" in employment_lower:
+            employment_type = "Graduate"
+        else:
+            continue
+        if not is_actionable_job_title(position) or not is_actionable_company_name(company, position):
+            continue
+        object_id = clean_text(item.get("objectID") or "")
+        job_source = clean_text(item.get("jobSource") or object_id.partition(":")[0])
+        url = careers_gov_job_url(object_id, job_source)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        description = clean_text(item.get("description") or "")
+        department = clean_text(item.get("department") or "")
+        updated = ""
+        try:
+            timestamp = float(item.get("activityTimestamp") or 0) / 1000
+            if timestamp > 0:
+                updated = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).strftime(DATE_FMT)
+        except (TypeError, ValueError, OverflowError, OSError):
+            pass
+        metadata = "\n".join(value for value in [
+            f"Department: {department}" if department else "",
+            f"Employment: {employment_label}" if employment_label else "",
+            f"Updated: {updated}" if updated else "",
+            f"Search query: {query}" if query else "",
+        ] if value)
+        jobs.append({
+            "company": company,
+            "position": position[:180],
+            "source": "Careers@Gov",
+            "url": url,
+            "external_job_id": object_id.partition(":")[2] or object_id,
+            "location": "Singapore",
+            "region": "SG",
+            "city": "Singapore",
+            "source_region": "SG",
+            "job_type": employment_label or employment_type,
+            "employment_type": employment_type,
+            "jd_text": f"{description}\n\n{metadata}".strip(),
+        })
+    return jobs
+
+
+def search_careers_gov_jobs(query: str, limit: int) -> list[dict]:
+    request = urllib.request.Request(
+        CAREERS_GOV_ALGOLIA_URL,
+        data=json.dumps({
+            "query": query,
+            "hitsPerPage": max(1, min(100, limit)),
+            "attributesToHighlight": [],
+            "queryLanguages": ["en"],
+        }).encode("utf-8"),
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Origin": "https://jobs.careers.gov.sg",
+            "Referer": "https://jobs.careers.gov.sg/",
+            "X-Algolia-Application-Id": CAREERS_GOV_ALGOLIA_APP_ID,
+            "X-Algolia-API-Key": CAREERS_GOV_ALGOLIA_SEARCH_KEY,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+    return parse_careers_gov_algolia_jobs(payload, query, limit)
+
+
+def parse_careers_gov_detail_html(html: str, listing: dict) -> dict:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return dict(listing)
+    soup = BeautifulSoup(html or "", "html.parser")
+    job = dict(listing)
+    title_node = soup.find("h1")
+    if title_node:
+        job["position"] = clean_text(title_node.get_text(" ", strip=True))[:180] or job.get("position")
+    sections: list[str] = []
+    allowed_headings = {
+        "what the role is",
+        "what you will be working on",
+        "what we are looking for",
+    }
+    for heading in soup.find_all("h2"):
+        label = clean_text(heading.get_text(" ", strip=True))
+        if label.lower() not in allowed_headings:
+            continue
+        container = heading.parent
+        content = clean_text(container.get_text(" ", strip=True)) if container else ""
+        if content.lower().startswith(label.lower()):
+            content = clean_text(content[len(label):])
+        if content:
+            sections.append(f"{label}\n{content}")
+    page_text = clean_text(soup.get_text(" ", strip=True))
+    closing_match = re.search(r"\b(?:closing on|job is closing on)\s+(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})", page_text, flags=re.I)
+    closing_text = f"Closing date: {closing_match.group(1)}" if closing_match else ""
+    if sections:
+        job["jd_text"] = "\n\n".join([*sections, *([closing_text] if closing_text else [])])[:12000]
+    elif closing_text:
+        job["jd_text"] = f"{job.get('jd_text') or ''}\n\n{closing_text}".strip()
+    job["job_type"] = detect_employment_type(job.get("position") or "", job.get("jd_text") or "", job.get("job_type") or "")
+    return job
+
+
+def fetch_careers_gov_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], []
+    query_results: dict[int, list[dict]] = {}
+    failures: list[str] = []
+
+    def fetch_query(index_query: tuple[int, str]) -> tuple[int, list[dict], str | None]:
+        index, query = index_query
+        try:
+            return index, search_careers_gov_jobs(query, 60), None
+        except Exception as exc:
+            return index, [], f"Careers@Gov {query}: {exc}"
+
+    with ThreadPoolExecutor(max_workers=len(CAREERS_GOV_QUERIES)) as executor:
+        futures = [executor.submit(fetch_query, item) for item in enumerate(CAREERS_GOV_QUERIES)]
+        for future in as_completed(futures):
+            index, jobs, failure = future.result()
+            query_results[index] = jobs
+            if failure and len(failures) < 3:
+                failures.append(failure)
+
+    selected: list[dict] = []
+    seen: set[str] = set()
+    round_index = 0
+    while len(selected) < limit and any(round_index < len(query_results.get(index, [])) for index in range(len(CAREERS_GOV_QUERIES))):
+        for index in range(len(CAREERS_GOV_QUERIES)):
+            jobs = query_results.get(index, [])
+            if round_index >= len(jobs):
+                continue
+            job = jobs[round_index]
+            url = job.get("url") or ""
+            if url and url not in seen:
+                seen.add(url)
+                selected.append(job)
+                if len(selected) >= limit:
+                    break
+        round_index += 1
+
+    enriched: dict[int, dict] = {}
+
+    def fetch_detail(index_job: tuple[int, dict]) -> tuple[int, dict, str | None]:
+        index, job = index_job
+        try:
+            html = http_get(job.get("url") or "", timeout=8, retries=0)
+            return index, parse_careers_gov_detail_html(html, job), None
+        except Exception as exc:
+            return index, job, f"Careers@Gov detail {job.get('position')}: {exc}"
+
+    with ThreadPoolExecutor(max_workers=min(8, max(1, len(selected)))) as executor:
+        futures = [executor.submit(fetch_detail, item) for item in enumerate(selected)]
+        for future in as_completed(futures):
+            index, job, failure = future.result()
+            enriched[index] = job
+            if failure and len(failures) < 3:
+                failures.append(failure)
+    return [enriched.get(index, job) for index, job in enumerate(selected)], failures
+
+
+INTERNSHIP_SG_QUERIES = [
+    "design intern",
+    "product design",
+    "AI intern",
+    "content intern",
+    "operations intern",
+    "marketing intern",
+]
+
+
+def parse_internship_sg_search_html(html: str, query: str, limit: int) -> list[dict]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return []
+    soup = BeautifulSoup(html or "", "html.parser")
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    for card in soup.select('a[href^="/internships/"]'):
+        position_node = card.select_one("h3")
+        company_node = card.select_one(".lbl")
+        if not position_node or not company_node:
+            continue
+        position = clean_text(position_node.get_text(" ", strip=True))
+        company = clean_text(company_node.get_text(" ", strip=True))
+        if not is_actionable_job_title(position) or not is_actionable_company_name(company, position):
+            continue
+        employment_type = detect_employment_type(position)
+        if employment_type not in {"Internship", "Graduate"}:
+            continue
+        url = absolute_url("https://internship.sg", card.get("href") or "")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        metadata = [
+            clean_text(node.get_text(" ", strip=True))
+            for node in card.select(".mono span")
+        ]
+        metadata = [value for value in metadata if value and value != "·"]
+        location = metadata[0] if metadata else "Singapore"
+        external_match = re.search(r"-(\d{10,}(?:-\d+)?)$", urlparse(url).path.rstrip("/"))
+        jobs.append({
+            "company": company,
+            "position": position[:180],
+            "source": "Internship.sg",
+            "url": url,
+            "external_job_id": external_match.group(1) if external_match else None,
+            "location": location,
+            "region": "SG",
+            "city": "Singapore",
+            "source_region": "SG",
+            "job_type": employment_type,
+            "jd_text": f"{position}\n{company}\n{' · '.join(metadata)}\nSource query: {query}".strip(),
+        })
+        if len(jobs) >= limit:
+            break
+    return jobs
+
+
+def parse_internship_sg_detail_html(html: str, listing: dict) -> dict:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return dict(listing)
+    soup = BeautifulSoup(html or "", "html.parser")
+    job = dict(listing)
+    title_node = soup.select_one("h1")
+    company_node = soup.select_one('a[href^="/companies/"]')
+    if title_node:
+        job["position"] = clean_text(title_node.get_text(" ", strip=True))[:180] or job.get("position")
+    if company_node:
+        job["company"] = clean_text(company_node.get_text(" ", strip=True)) or job.get("company")
+
+    details: dict[str, list[str]] = {}
+    for group in soup.select("dl > div"):
+        term = group.select_one("dt")
+        if not term:
+            continue
+        key = clean_text(term.get_text(" ", strip=True)).lower()
+        values = [clean_text(node.get_text(" ", strip=True)) for node in group.select("dd")]
+        details[key] = [value for value in values if value]
+    location_parts = details.get("location") or []
+    if location_parts:
+        job["location"] = " · ".join(dict.fromkeys(location_parts))
+    allowance = (details.get("allowance") or [""])[0]
+    if allowance and "not disclosed" not in allowance.lower() and "not stated" not in allowance.lower():
+        job["salary_text"] = allowance
+    duration = (details.get("duration") or [""])[0]
+    job["job_type"] = " · ".join(value for value in [detect_employment_type(job.get("position") or ""), duration] if value)
+
+    descriptions = [clean_text(node.get_text(" ", strip=True)) for node in soup.select(".prose-editorial")]
+    description = max(descriptions, key=len, default="")
+    original_url = ""
+    for link in soup.select("a[href]"):
+        text = clean_text(link.get_text(" ", strip=True)).lower()
+        href = absolute_url("https://internship.sg", link.get("href") or "")
+        if "original listing" in text and urlparse(href).netloc not in {"", "internship.sg", "www.internship.sg"}:
+            original_url = href
+            break
+    evidence = f"Original listing: {original_url}" if original_url else ""
+    if description:
+        job["jd_text"] = "\n\n".join(value for value in [description[:12000], evidence] if value)
+    elif evidence:
+        job["jd_text"] = f"{job.get('jd_text') or ''}\n\n{evidence}".strip()
+    return job
+
+
+def fetch_internship_sg_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], []
+
+    def fetch_search(index_query: tuple[int, str]) -> tuple[int, list[dict], str | None]:
+        index, query = index_query
+        url = f"https://internship.sg/search?q={quote_plus(query).replace('+', '%20')}"
+        try:
+            html = http_get(url, timeout=10, retries=0)
+            return index, parse_internship_sg_search_html(html, query, 30), None
+        except Exception as exc:
+            return index, [], f"Internship.sg {query}: {exc}"
+
+    search_results: dict[int, list[dict]] = {}
+    failures: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(INTERNSHIP_SG_QUERIES)) as executor:
+        futures = [executor.submit(fetch_search, item) for item in enumerate(INTERNSHIP_SG_QUERIES)]
+        for future in as_completed(futures):
+            index, query_jobs, failure = future.result()
+            search_results[index] = query_jobs
+            if failure and len(failures) < 3:
+                failures.append(failure)
+
+    selected: list[dict] = []
+    seen: set[str] = set()
+    round_index = 0
+    while len(selected) < limit and any(round_index < len(search_results.get(index, [])) for index in range(len(INTERNSHIP_SG_QUERIES))):
+        for index in range(len(INTERNSHIP_SG_QUERIES)):
+            query_jobs = search_results.get(index, [])
+            if round_index >= len(query_jobs):
+                continue
+            job = query_jobs[round_index]
+            url = job.get("url") or ""
+            if url and url not in seen:
+                seen.add(url)
+                selected.append(job)
+                if len(selected) >= limit:
+                    break
+        round_index += 1
+
+    enriched: dict[int, dict] = {}
+
+    def fetch_detail(index_job: tuple[int, dict]) -> tuple[int, dict, str | None]:
+        index, job = index_job
+        try:
+            html = http_get(job.get("url") or "", timeout=8, retries=0)
+            return index, parse_internship_sg_detail_html(html, job), None
+        except Exception as exc:
+            return index, job, f"Internship.sg detail {job.get('position')}: {exc}"
+
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(selected)))) as executor:
+        futures = [executor.submit(fetch_detail, item) for item in enumerate(selected)]
+        for future in as_completed(futures):
+            index, job, failure = future.result()
+            enriched[index] = job
+            if failure and len(failures) < 3:
+                failures.append(failure)
+    return [enriched.get(index, job) for index, job in enumerate(selected)], failures
+
+
+def fetch_cultjobs_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], []
+    failures: list[str] = []
+    try:
+        listing_html = http_get("https://cultjobs.com/job-type/internship/", timeout=12, retries=0)
+    except Exception as exc:
+        return [], [f"Cultjobs listing: {exc}"]
+    urls = parse_cultjobs_listing_urls(listing_html, limit + 6)
+    parsed_by_index: dict[int, dict] = {}
+
+    def fetch_detail(index_url: tuple[int, str]) -> tuple[int, dict | None, str | None]:
+        index, url = index_url
+        try:
+            detail_html = http_get(url, timeout=6, retries=0)
+        except Exception as exc:
+            return index, None, f"Cultjobs detail {url}: {exc}"
+        return index, parse_cultjobs_detail(detail_html, url), None
+
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(urls)))) as executor:
+        futures = [executor.submit(fetch_detail, item) for item in enumerate(urls)]
+        for future in as_completed(futures):
+            index, job, failure = future.result()
+            if failure and len(failures) < 3:
+                failures.append(failure)
+            if job:
+                parsed_by_index[index] = job
+    jobs = [parsed_by_index[index] for index in sorted(parsed_by_index)][:limit]
+    if not jobs and not failures:
+        failures.append("Cultjobs limited: no current Singapore internships found.")
+    return jobs, failures
+
+
+def fetch_sg_startup_channel_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], []
+    raw_jobs, failures = fetch_jobstreet_jobs(
+        max(limit * 2, limit),
+        STARTUP_OPPORTUNITY_QUERIES,
+        code,
+        time_budget_seconds=10,
+        failure_limit=2,
+        use_html_fallback=False,
+    )
+    jobs: list[dict] = []
+    for job in raw_jobs:
+        employment = detect_employment_type(job.get("position") or "", job.get("jd_text") or "", job.get("job_type") or "")
+        if employment not in {"Internship", "Graduate"}:
+            continue
+        identity_text = clean_ai_detection_text(f"{job.get('company') or ''} {job.get('position') or ''}")
+        if not any(has_keyword(identity_text, signal) for signal in STARTUP_OPPORTUNITY_SIGNALS):
+            continue
+        job["source"] = "JobStreet · 创业/AI"
+        jobs.append(job)
+        if len(jobs) >= limit:
+            break
+    return jobs, failures
+
+
+def fetch_sg_ai_startup_ats_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    code = active_region_code(region)
+    if code != "SG":
+        return [], []
+    city = active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]
+    per_board_limit = max(4, min(8, limit))
+    raw_board_limit = max(40, per_board_limit)
+
+    def fetch_board(index_board: tuple[int, tuple[str, str, str]]) -> tuple[int, list[dict], list[str]]:
+        index, (company, url, focus) = index_board
+        try:
+            board_jobs, board_failures = fetch_company_ats_jobs(url, company, focus, code, city, raw_board_limit)
+        except Exception as exc:
+            return index, [], [f"{company} ATS: {exc}"]
+        entry_jobs: list[dict] = []
+        for job in board_jobs:
+            location = clean_text(job.get("location") or "").lower()
+            if "singapore" not in location:
+                continue
+            employment = detect_employment_type(
+                job.get("position") or "",
+                job.get("jd_text") or "",
+                job.get("job_type") or "",
+            )
+            if employment not in {"Internship", "Graduate"}:
+                continue
+            if employment == "Graduate" and detect_employment_type(
+                job.get("position") or "",
+                "",
+                job.get("job_type") or "",
+            ) != "Graduate":
+                continue
+            job["employment_type"] = employment
+            job["job_type"] = employment
+            job["source"] = "ATS · 科技初创"
+            entry_jobs.append(job)
+            if len(entry_jobs) >= per_board_limit:
+                break
+        return index, entry_jobs, board_failures
+
+    results: dict[int, tuple[list[dict], list[str]]] = {}
+    with ThreadPoolExecutor(max_workers=min(6, len(SG_AI_STARTUP_ATS_BOARDS))) as executor:
+        futures = [executor.submit(fetch_board, item) for item in enumerate(SG_AI_STARTUP_ATS_BOARDS)]
+        for future in as_completed(futures):
+            index, jobs, failures = future.result()
+            results[index] = (jobs, failures)
+
+    jobs_by_company: list[list[dict]] = []
+    failures: list[str] = []
+    for index in range(len(SG_AI_STARTUP_ATS_BOARDS)):
+        board_jobs, board_failures = results.get(index, ([], [f"{SG_AI_STARTUP_ATS_BOARDS[index][0]} ATS: no response"]))
+        jobs_by_company.append(board_jobs)
+        failures.extend(board_failures[:1])
+
+    jobs: list[dict] = []
+    seen: set[str] = set()
+    round_index = 0
+    while len(jobs) < limit and any(round_index < len(items) for items in jobs_by_company):
+        for company_jobs in jobs_by_company:
+            if round_index >= len(company_jobs):
+                continue
+            job = company_jobs[round_index]
+            key = canonical_job_url(job.get("source") or "", job.get("url") or "", job.get("external_job_id"))
+            if key and key not in seen:
+                seen.add(key)
+                jobs.append(job)
+                if len(jobs) >= limit:
+                    break
+        round_index += 1
+    return jobs, failures
+
+
 def scan_source_definitions(region: str | None = None) -> list[tuple[str, object, int]]:
     code = active_region_code(region)
     if code == "SG":
         sources = [
             ("LinkedIn（含 AI 关键词）", lambda limit: fetch_linkedin_jobs_with_ai(limit, code), SOURCE_LIMITS["LinkedIn"] + SOURCE_LIMITS["LinkedIn AI"]),
             ("InternSG（含 AI 关键词）", fetch_internsg_jobs_with_ai, SOURCE_LIMITS["InternSG"] + SOURCE_LIMITS["InternSG AI"]),
+            ("Cultjobs", lambda limit: fetch_cultjobs_jobs(limit, code), SOURCE_LIMITS["Cultjobs"]),
+            ("MyCareersFuture", lambda limit: fetch_mycareersfuture_jobs(limit, code), SOURCE_LIMITS["MyCareersFuture"]),
+            ("Careers@Gov", lambda limit: fetch_careers_gov_jobs(limit, code), SOURCE_LIMITS["Careers@Gov"]),
+            ("Internship.sg", lambda limit: fetch_internship_sg_jobs(limit, code), SOURCE_LIMITS["Internship.sg"]),
+            ("新加坡科技与 AI ATS", lambda limit: fetch_sg_ai_startup_ats_jobs(limit, code), SOURCE_LIMITS["AI Startup ATS"]),
             ("Indeed", lambda limit: fetch_indeed_jobs_with_ai(limit, code), SOURCE_LIMITS["Indeed"] + SOURCE_LIMITS["Indeed AI"]),
             ("JobStreet", lambda limit: fetch_jobstreet_jobs_with_ai(limit, code), SOURCE_LIMITS["JobStreet"] + SOURCE_LIMITS["JobStreet AI"]),
+            ("关注公司公开来源", lambda limit: fetch_watched_company_public_jobs(limit, code), SOURCE_LIMITS["Watched Companies"]),
+            ("创业与 AI 机会", lambda limit: fetch_sg_startup_channel_jobs(limit, code), SOURCE_LIMITS["Startup Channels"]),
             ("公司官网", lambda limit: fetch_company_site_jobs(limit, code), SOURCE_LIMITS["Company Site"]),
         ]
         if os.environ.get("SERPAPI_KEY"):
@@ -4838,7 +7337,16 @@ def create_scan_source_run(scan_run_id: int, source: str) -> int:
         return conn.execute("select last_insert_rowid()").fetchone()[0]
 
 
-def finish_scan_source_run(source_run_id: int, status: str, scanned: int, saved: int, failures: list[dict | str]) -> None:
+def finish_scan_source_run(
+    source_run_id: int,
+    status: str,
+    scanned: int,
+    saved: int,
+    failures: list[dict | str],
+    new_count: int = 0,
+    updated_count: int = 0,
+    duplicate_count: int = 0,
+) -> None:
     stamp = now_iso()
     with get_db() as conn:
         conn.execute(
@@ -4848,16 +7356,42 @@ def finish_scan_source_run(source_run_id: int, status: str, scanned: int, saved:
                 status=?,
                 scanned_count=?,
                 saved_count=?,
+                new_count=?,
+                updated_count=?,
+                duplicate_count=?,
                 failure_count=?,
                 failures_json=?,
                 updated_at=?
             where id=?
             """,
-            (stamp, status, scanned, saved, len(failures), json.dumps(failures, ensure_ascii=False), stamp, source_run_id),
+            (
+                stamp,
+                status,
+                scanned,
+                saved,
+                new_count,
+                updated_count,
+                duplicate_count,
+                len(failures),
+                json.dumps(failures, ensure_ascii=False),
+                stamp,
+                source_run_id,
+            ),
         )
 
 
-def finish_scan_run(scan_run_id: int, status: str, scanned: int, saved: int, recommended: int, ai_recommended: int, failures: list[dict]) -> None:
+def finish_scan_run(
+    scan_run_id: int,
+    status: str,
+    scanned: int,
+    saved: int,
+    recommended: int,
+    ai_recommended: int,
+    failures: list[dict],
+    new_count: int = 0,
+    updated_count: int = 0,
+    duplicate_count: int = 0,
+) -> None:
     stamp = now_iso()
     with get_db() as conn:
         conn.execute(
@@ -4867,6 +7401,9 @@ def finish_scan_run(scan_run_id: int, status: str, scanned: int, saved: int, rec
                 status=?,
                 scanned_count=?,
                 saved_count=?,
+                new_count=?,
+                updated_count=?,
+                duplicate_count=?,
                 recommended_count=?,
                 ai_recommended_count=?,
                 failures_json=?,
@@ -4878,6 +7415,9 @@ def finish_scan_run(scan_run_id: int, status: str, scanned: int, saved: int, rec
                 status,
                 scanned,
                 saved,
+                new_count,
+                updated_count,
+                duplicate_count,
                 recommended,
                 ai_recommended,
                 json.dumps(failures, ensure_ascii=False),
@@ -4910,6 +7450,9 @@ def mark_scan_run_interrupted(scan_run_id: int) -> None:
             select
                 coalesce(sum(scanned_count), 0) as scanned,
                 coalesce(sum(saved_count), 0) as saved,
+                coalesce(sum(new_count), 0) as new_count,
+                coalesce(sum(updated_count), 0) as updated_count,
+                coalesce(sum(duplicate_count), 0) as duplicate_count,
                 coalesce(sum(failure_count), 0) as failure_count
             from scan_source_runs
             where scan_run_id=?
@@ -4931,6 +7474,9 @@ def mark_scan_run_interrupted(scan_run_id: int) -> None:
                 status='interrupted',
                 scanned_count=?,
                 saved_count=?,
+                new_count=?,
+                updated_count=?,
+                duplicate_count=?,
                 failures_json=?,
                 updated_at=?
             where id=? and status='running'
@@ -4939,6 +7485,9 @@ def mark_scan_run_interrupted(scan_run_id: int) -> None:
                 stamp,
                 int(totals["scanned"] or 0),
                 int(totals["saved"] or 0),
+                int(totals["new_count"] or 0),
+                int(totals["updated_count"] or 0),
+                int(totals["duplicate_count"] or 0),
                 json.dumps(failures, ensure_ascii=False),
                 stamp,
                 scan_run_id,
@@ -5020,16 +7569,46 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
     failures: list[dict] = []
     source_counts: dict[str, int] = {}
     seen_urls: set[str] = set()
+    seen_dedupe_keys: set[str] = set()
+    with get_db() as conn:
+        existing_urls = {row["url"] for row in conn.execute("select url from jobs where url<>''").fetchall()}
+    new_count = 0
+    updated_count = 0
+    duplicate_count = 0
+    scan_user_id = request_user_id()
+    source_run_ids = {name: create_scan_source_run(scan_run_id, name) for name, _fetcher, _limit in sources}
+    fetch_results: dict[str, tuple[list[dict], list[str]]] = {}
+
+    def fetch_source(fetcher, limit: int) -> tuple[list[dict], list[str]]:
+        with request_user_context(scan_user_id):
+            return fetcher(limit)
+
+    with ThreadPoolExecutor(max_workers=min(12, max(1, len(sources)))) as executor:
+        futures = {
+            executor.submit(fetch_source, fetcher, limit): source_name
+            for source_name, fetcher, limit in sources
+        }
+        for future in as_completed(futures):
+            source_name = futures[future]
+            try:
+                raw_jobs, fetch_failures = future.result()
+            except Exception as exc:
+                raw_jobs, fetch_failures = [], [str(exc)]
+            fetch_results[source_name] = (raw_jobs, list(fetch_failures))
+
     for source_name, fetcher, limit in sources:
-        source_run_id = create_scan_source_run(scan_run_id, source_name)
+        source_run_id = source_run_ids[source_name]
         source_saved = 0
+        source_new = 0
+        source_updated = 0
+        source_duplicates = 0
         source_failure_items: list[dict] = []
-        try:
-            raw_jobs, fetch_failures = fetcher(limit)
-        except Exception as exc:
-            raw_jobs, source_errors = [], [str(exc)]
-        else:
-            source_errors = list(fetch_failures)
+        raw_jobs, source_errors = fetch_results.get(source_name, ([], ["来源抓取未返回结果。"]))
+        source_errors = summarize_scan_source_failures(source_name, source_errors, len(raw_jobs))
+        source_errors = [
+            error for error in source_errors
+            if not is_nonblocking_scan_warning(source_name, error, len(raw_jobs))
+        ]
         for failure in source_errors:
             item = {"source": source_name, "error": str(failure)}
             failures.append(item)
@@ -5044,13 +7623,29 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
             raw_job.setdefault("source_region", code)
             if not raw_job.get("location"):
                 raw_job["location"] = city
-            if not url or url in seen_urls:
+            if not url:
+                continue
+            if url in seen_urls:
+                source_duplicates += 1
+                duplicate_count += 1
                 continue
             seen_urls.add(url)
+            dedupe_key = job_dedupe_key(raw_job)
+            if dedupe_key in seen_dedupe_keys:
+                source_duplicates += 1
+                duplicate_count += 1
+            else:
+                seen_dedupe_keys.add(dedupe_key)
             try:
                 saved_job = upsert_job(raw_job)
                 saved.append(saved_job)
                 source_saved += 1
+                if url in existing_urls:
+                    source_updated += 1
+                    updated_count += 1
+                else:
+                    source_new += 1
+                    new_count += 1
             except Exception as exc:
                 item = {"source": source_name, "url": url, "error": str(exc)}
                 failures.append(item)
@@ -5063,7 +7658,16 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
             source_status = "limited"
         else:
             source_status = "failed"
-        finish_scan_source_run(source_run_id, source_status, len(raw_jobs), source_saved, source_failure_items)
+        finish_scan_source_run(
+            source_run_id,
+            source_status,
+            len(raw_jobs),
+            source_saved,
+            source_failure_items,
+            source_new,
+            source_updated,
+            source_duplicates,
+        )
 
     recommended = [
         job for job in saved
@@ -5081,7 +7685,18 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
         run_status = "limited"
     else:
         run_status = "failed"
-    finish_scan_run(scan_run_id, run_status, sum(source_counts.values()), len(saved), len(recommended), ai_recommended, failures[:80])
+    finish_scan_run(
+        scan_run_id,
+        run_status,
+        sum(source_counts.values()),
+        len(saved),
+        len(recommended),
+        ai_recommended,
+        failures[:80],
+        new_count,
+        updated_count,
+        duplicate_count,
+    )
     generate_report(code)
     result = {
         "run_id": scan_run_id,
@@ -5090,6 +7705,9 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
         "city": city,
         "scanned": sum(source_counts.values()),
         "saved": len(saved),
+        "new": new_count,
+        "updated": updated_count,
+        "duplicates": duplicate_count,
         "recommended": len(recommended),
         "ai_recommended": ai_recommended,
         "top_jobs": recommended[:20],
@@ -5882,7 +8500,7 @@ Resume source: {current_resume_path()}
 
 
 def upsert_job(payload: dict) -> dict:
-    company = (payload.get("company") or "").strip() or "Unknown Company"
+    company = clean_company_name(payload.get("company") or "") or "Unknown Company"
     position = (payload.get("position") or "").strip() or "Unknown Position"
     source = (payload.get("source") or "Manual").strip()
     external_job_id = (payload.get("external_job_id") or "").strip() or None
@@ -5899,7 +8517,10 @@ def upsert_job(payload: dict) -> dict:
     if not jd_text:
         jd_text = "JD not pasted yet. Preserve URL and update JD before drafting."
 
-    metadata = job_metadata(position, jd_text, job_type, region)
+    metadata = job_metadata(position, jd_text, job_type, region, company, source)
+    for key in ["salary_min", "salary_max", "salary_currency", "salary_period", "salary_text", "salary_fit"]:
+        if key in payload and payload.get(key) not in {None, ""}:
+            metadata[key] = payload[key]
     score, flags, match_notes = score_job(company, position, jd_text, source)
     hard_blocked = any(flag in flags for flag in ["citizen_or_pr_only", "local_only", "clearance_required"])
     initial_status = "Recommended" if score >= 3.0 and not hard_blocked else "New"
@@ -5936,6 +8557,11 @@ def upsert_job(payload: dict) -> dict:
                     salary_period=?,
                     salary_text=?,
                     salary_fit=?,
+                    conversion_signal=?,
+                    visa_sponsorship_signal=?,
+                    language_signal=?,
+                    pathway_score=?,
+                    pathway_evidence_json=?,
                     jd_text=?,
                     jd_hash=?,
                     score=?,
@@ -5966,6 +8592,11 @@ def upsert_job(payload: dict) -> dict:
                     metadata["salary_period"],
                     metadata["salary_text"],
                     metadata["salary_fit"],
+                    metadata["conversion_signal"],
+                    metadata["visa_sponsorship_signal"],
+                    metadata["language_signal"],
+                    metadata["pathway_score"],
+                    json.dumps(metadata["pathway_evidence_json"], ensure_ascii=False),
                     jd_text,
                     jd_hash,
                     score,
@@ -5985,11 +8616,13 @@ def upsert_job(payload: dict) -> dict:
                 insert into jobs(
                     company, position, name, source, url, external_job_id, location, region, city, source_region,
                     job_type, employment_type, conversion_opportunity, salary_min, salary_max,
-                    salary_currency, salary_period, salary_text, salary_fit, jd_text, jd_hash,
+                    salary_currency, salary_period, salary_text, salary_fit,
+                    conversion_signal, visa_sponsorship_signal, language_signal, pathway_score, pathway_evidence_json,
+                    jd_text, jd_hash,
                     score, status, eligibility_flags, match_notes, found_date, batch_date,
                     recommended_date, last_checked_at, resume_path, cover_letter_path, created_at, updated_at
                 )
-                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     company,
@@ -6011,6 +8644,11 @@ def upsert_job(payload: dict) -> dict:
                     metadata["salary_period"],
                     metadata["salary_text"],
                     metadata["salary_fit"],
+                    metadata["conversion_signal"],
+                    metadata["visa_sponsorship_signal"],
+                    metadata["language_signal"],
+                    metadata["pathway_score"],
+                    json.dumps(metadata["pathway_evidence_json"], ensure_ascii=False),
                     jd_text,
                     jd_hash,
                     score,
@@ -6109,10 +8747,44 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
             values.extend([city_filter, f"%{city_filter}%"])
     if clauses:
         query += " where " + " and ".join(clauses)
-    query += " order by score desc, updated_at desc limit 500"
+    user_state_filter = bool(status and status not in {"New", "Recommended"})
+    query += f" order by score desc, updated_at desc limit {5000 if user_state_filter or date_filter else 500}"
     with get_db() as conn:
         rows = conn.execute(query, values).fetchall()
-    return [row_to_dict(row) for row in rows]
+        pathway_rows = []
+        state_rows = []
+        if region_filter and not status and not date_filter:
+            code = active_region_code(region_filter)
+            pathway_query = """
+                select * from jobs
+                where region=?
+                  and score>=2.5 and score<3.0
+                  and pathway_score>=3.4
+                  and employment_type in ('Internship', 'Graduate')
+                order by pathway_score desc, score desc, updated_at desc
+                limit 100
+            """
+            pathway_rows = conn.execute(pathway_query, (code,)).fetchall()
+            state_clauses = ["region=?", "status not in ('New', 'Recommended')"]
+            state_values: list[str] = [code]
+            if city_filter and code == "CN":
+                state_clauses.append("(city = ? or location like ? or coalesce(city, '') = '')")
+                state_values.extend([city_filter, f"%{city_filter}%"])
+            state_rows = conn.execute(
+                f"select * from jobs where {' and '.join(state_clauses)} order by updated_at desc limit 5000",
+                state_values,
+            ).fetchall()
+    jobs = [row_to_dict(row) for row in rows]
+    seen_ids = {job.get("id") for job in jobs}
+    for job in (row_to_dict(row) for row in state_rows):
+        if job.get("id") not in seen_ids:
+            jobs.append(job)
+            seen_ids.add(job.get("id"))
+    jobs.extend(
+        job for job in (row_to_dict(row) for row in pathway_rows)
+        if job.get("id") not in seen_ids and is_pathway_recommendation_candidate(job)
+    )
+    return jobs
 
 
 def clean_ai_detection_text(text: str) -> str:
@@ -6126,19 +8798,106 @@ def keyword_hits(text: str, keywords: list[str]) -> list[str]:
     return [keyword for keyword in keywords if has_keyword(text, keyword)]
 
 
+def is_actionable_job_title(title: str) -> bool:
+    normalized = clean_text(title).lower().strip(" -|:")
+    if not normalized:
+        return False
+    if re.match(r"^(view all|see all|browse all|explore all)\b", normalized):
+        return False
+    if re.match(r"^(careers?|jobs?)\s+at\b", normalized):
+        return False
+    return normalized not in {
+        "career",
+        "careers",
+        "job",
+        "jobs",
+        "job search",
+        "search jobs",
+        "open roles",
+        "open positions",
+        "opportunities",
+        "join us",
+        "developer center",
+        "design center",
+        "resource center",
+    }
+
+
+def is_actionable_company_name(company: str, position: str = "") -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", " ", clean_text(company).lower()).strip()
+    position_normalized = re.sub(r"[^a-z0-9]+", " ", clean_text(position).lower()).strip()
+    if not normalized or normalized == position_normalized:
+        return False
+    return normalized not in {
+        "linkedin company",
+        "indeed company",
+        "internsg company",
+        "glints nodeflair startups",
+        "mainland public search",
+        "public search",
+        "jobsdb",
+    }
+
+
+def is_pathway_recommendation_candidate(job: dict) -> bool:
+    employment = job.get("employment_type") or detect_employment_type(
+        job.get("position") or "",
+        job.get("jd_text") or "",
+        job.get("job_type") or "",
+    )
+    score = float(job.get("score") or 0)
+    pathway_score = float(job.get("pathway_score") or 0)
+    conversion = job.get("conversion_signal") or "unknown"
+    visa = job.get("visa_sponsorship_signal") or "unknown"
+    language = job.get("language_signal") or "unknown"
+    has_pathway_signal = conversion in {"strong", "possible"} or visa == "possible" or language == "chinese_friendly_possible"
+    return employment in {"Internship", "Graduate"} and score >= 2.5 and pathway_score >= 3.4 and has_pathway_signal
+
+
+def job_listing_freshness(job: dict) -> dict:
+    checked_age = days_since_date(job.get("last_checked_at") or job.get("updated_at"))
+    found_age = days_since_date(job.get("found_date") or job.get("batch_date") or job.get("recommended_date"))
+    source = clean_text(job.get("source") or "").lower()
+    if checked_age == 0:
+        return {"status": "verified", "label": "今日已验证", "adjustment": 0.0, "checked_age_days": checked_age}
+    if checked_age is not None and checked_age <= 7:
+        return {"status": "verified", "label": "本周已验证", "adjustment": 0.0, "checked_age_days": checked_age}
+    if found_age is not None and found_age <= 7:
+        return {"status": "recent", "label": "近期新发现", "adjustment": 0.0, "checked_age_days": checked_age}
+    if checked_age is None:
+        return {"status": "unknown", "label": "有效性未知", "adjustment": -0.18, "checked_age_days": None}
+    if checked_age <= 14:
+        return {"status": "aging", "label": "建议确认", "adjustment": -0.08, "checked_age_days": checked_age}
+    if checked_age <= 30:
+        return {"status": "aging", "label": "较早岗位", "adjustment": -0.18, "checked_age_days": checked_age}
+    if "linkedin" in source:
+        return {"status": "likely_closed", "label": "可能已下架", "adjustment": -1.0, "checked_age_days": checked_age}
+    return {"status": "verify", "label": "需确认有效", "adjustment": -0.32, "checked_age_days": checked_age}
+
+
 def is_recommendation_available(job: dict) -> bool:
     blocked_statuses = NOTION_APPLICATION_STATUSES | {"Dropped", "Closed"}
     hard_flags = {"citizen_or_pr_only", "local_only", "clearance_required"}
+    region = job.get("source_region") or job.get("region") or ""
+    city = job.get("city") or (REGION_CONFIGS.get(region) or {}).get("default_city") or ""
+    source = clean_text(job.get("source") or "").lower()
+    location_validator = explicit_ats_location_matches_region if "ats" in source else location_matches_region
+    location_is_valid = not region or location_validator(job.get("location") or "", region, city)
+    freshness = job_listing_freshness(job)
     return (
         job.get("status") not in blocked_statuses
-        and float(job.get("score") or 0) >= 3.0
+        and freshness["status"] != "likely_closed"
+        and (float(job.get("score") or 0) >= 3.0 or is_pathway_recommendation_candidate(job))
+        and is_actionable_job_title(job.get("position") or job.get("title") or "")
+        and is_actionable_company_name(job.get("company") or "", job.get("position") or job.get("title") or "")
+        and location_is_valid
         and not hard_flags.intersection(set(job.get("eligibility_flags") or []))
     )
 
 
-def ai_relevance_details(job: dict) -> dict:
-    title_text = clean_ai_detection_text(f"{job.get('company', '')} {job.get('position', '')}")
-    jd_text = clean_ai_detection_text(job.get("jd_text") or "")
+def ai_relevance_details(job: dict, matching_text: str | None = None) -> dict:
+    title_text = clean_ai_detection_text(job.get("position", ""))
+    jd_text = matching_text if matching_text is not None else job_matching_text(job)
     combined = f"{title_text} {jd_text}"
     title_hits = keyword_hits(title_text, AI_EXPLICIT_KEYWORDS)
     jd_hits = keyword_hits(jd_text, AI_EXPLICIT_KEYWORDS)
@@ -6147,7 +8906,7 @@ def ai_relevance_details(job: dict) -> dict:
     role_hits = keyword_hits(combined, AI_ROLE_ANCHORS)
 
     title_signal = bool(title_hits)
-    jd_signal = bool(domain_hits) and bool(role_hits)
+    jd_signal = bool(jd_hits or domain_hits) and bool(role_hits)
     adjacent_signal = bool(adjacent_hits) and bool(role_hits) and any(
         has_keyword(title_text, term) for term in adjacent_hits
     )
@@ -6186,9 +8945,13 @@ def list_ai_jobs(params: dict[str, list[str]]) -> list[dict]:
     limit = max(1, min(20, limit))
     region = active_region_code((params.get("region") or [""])[0] or None)
     city = (params.get("city") or [active_region_context(region).get("city") or ""])[0]
+    watched = watched_company_keys(region)
+    dismissed = dismissed_company_keys(region)
     candidates: list[dict] = []
     for job in list_jobs({"region": [region], "city": [city]}):
         if not is_recommendation_available(job):
+            continue
+        if is_watched_company_job(job, watched) or is_watched_company_job(job, dismissed):
             continue
         ai_details = ai_relevance_details(job)
         if not ai_details["is_ai_related"]:
@@ -6196,21 +8959,68 @@ def list_ai_jobs(params: dict[str, list[str]]) -> list[dict]:
         job.update(ai_details)
         candidates.append(job)
 
+    candidates = apply_preference_scores_to_jobs(candidates, region)
     current_date = today()
     candidates.sort(
         key=lambda item: (
             item.get("batch_date") == current_date or item.get("recommended_date") == current_date,
             float(item.get("ai_relevance") or 0),
-            float(item.get("score") or 0),
+            float(item.get("rank_score") or item.get("score") or 0),
             item.get("updated_at") or "",
         ),
         reverse=True,
     )
-    return candidates[:limit]
+    selected = collapse_duplicate_job_groups(candidates)[:limit]
+    return compact_job_payloads(selected) if request_uses_compact_jobs(params) else selected
 
 
 def career_direction_by_id(direction_id: str) -> dict | None:
     return next((item for item in CAREER_DIRECTIONS if item["id"] == direction_id), None)
+
+
+def job_matching_text(job: dict) -> str:
+    raw_jd_text = job.get("jd_text") or ""
+    preamble_lines = raw_jd_text.splitlines()
+    if preamble_lines and "official career match" in preamble_lines[0].lower():
+        first_content_line = next(
+            (index + 1 for index, line in enumerate(preamble_lines[:8]) if index >= 4 and not line.strip()),
+            min(5, len(preamble_lines)),
+        )
+        raw_jd_text = "\n".join(preamble_lines[first_content_line:])
+    raw_jd_text = re.sub(r"(?im)^\s*source\s+query\s*:.*$", " ", raw_jd_text)
+    jd_text = clean_text(raw_jd_text)
+    source = (job.get("source") or "").lower()
+    lowered = jd_text.lower()
+    if "internsg" in source:
+        marker = lowered.find("job description")
+        if marker >= 0:
+            jd_text = jd_text[marker + len("job description"):]
+        lowered_detail = jd_text.lower()
+        end_markers = [
+            lowered_detail.find(value)
+            for value in [
+                "you can discuss this job",
+                "share this page",
+                "previous job listing",
+                "related posts",
+                "related job searches",
+                "copyright ©",
+            ]
+            if lowered_detail.find(value) >= 0
+        ]
+        if end_markers:
+            jd_text = jd_text[:min(end_markers)]
+    elif "linkedin" in source:
+        markers = [
+            lowered.find(value)
+            for value in ["about the job", "job summary", "position "]
+            if lowered.find(value) >= 0
+        ]
+        if markers:
+            jd_text = jd_text[min(markers):]
+    return clean_ai_detection_text(
+        f"{job.get('position', '')} {jd_text}"
+    )
 
 
 def active_preference_direction_ids() -> tuple[list[str], str]:
@@ -6237,22 +9047,38 @@ def active_preference_direction_ids() -> tuple[list[str], str]:
     return [], "base_score"
 
 
-def direction_match_for_job(job: dict, direction: dict) -> tuple[float, list[str]]:
-    text = clean_ai_detection_text(f"{job.get('company', '')} {job.get('position', '')} {job.get('jd_text', '')} {job.get('source', '')}")
+def direction_match_for_job(job: dict, direction: dict, matching_text: str | None = None) -> tuple[float, list[str]]:
+    text = matching_text if matching_text is not None else job_matching_text(job)
     hits = [keyword for keyword in direction["keywords"] if has_keyword(text, keyword)]
     if not hits:
         return 0.0, []
-    title_text = clean_ai_detection_text(f"{job.get('company', '')} {job.get('position', '')}")
+    title_text = clean_ai_detection_text(job.get("position", ""))
     title_hits = [keyword for keyword in hits if has_keyword(title_text, keyword)]
+    generic_keywords = DIRECTION_GENERIC_KEYWORDS.get(direction["id"], set())
+    specific_hits = [keyword for keyword in hits if keyword not in generic_keywords]
+    if (
+        direction["id"] == "ai-product"
+        and PURE_TECHNICAL_TITLE_PATTERN.search(title_text)
+        and not PRODUCT_FACING_TITLE_PATTERN.search(title_text)
+    ):
+        return 0.0, []
+    if direction["id"] == "ai-product" and not PRODUCT_FACING_TITLE_PATTERN.search(title_text) and not specific_hits:
+        return 0.0, []
+    if not title_hits and NON_TARGET_FUNCTION_TITLE_PATTERN.search(title_text):
+        return 0.0, []
+    if not title_hits and not specific_hits:
+        return 0.0, []
     score = min(1.0, len(hits) / 4)
     if title_hits:
         score = min(1.0, score + 0.25)
+    elif specific_hits:
+        score = min(1.0, score + 0.1)
     return score, hits[:8]
 
 
-def region_fit_for_job(job: dict, region: str, watched_companies: set[str]) -> dict:
+def region_fit_for_job(job: dict, region: str, watched_companies: set[str], context: dict | None = None) -> dict:
     code = active_region_code(region)
-    context = active_region_context(code)
+    context = context or active_region_context(code)
     city = (context.get("city") or REGION_CONFIGS[code]["default_city"]).lower()
     job_region = active_region_code(job.get("region") or job.get("source_region") or code)
     location_text = f"{job.get('location', '')} {job.get('city', '')}".lower()
@@ -6279,6 +9105,7 @@ def region_fit_for_job(job: dict, region: str, watched_companies: set[str]) -> d
 def employment_preference_for_job(job: dict, context: dict) -> dict:
     priority = context.get("employment_priority") or "unspecified"
     employment_type = job.get("employment_type") or "Unknown"
+    flags = set(job.get("eligibility_flags") or [])
     boost = 0.0
     label = ""
     if priority == "internship":
@@ -6297,6 +9124,9 @@ def employment_preference_for_job(job: dict, context: dict) -> dict:
             boost, label = -0.08, "实习次优先"
     elif priority == "both" and employment_type in {"Internship", "Graduate", "Full-time"}:
         boost, label = 0.08, "类型匹配"
+    if "experience_too_high" in flags and priority in {"internship", "both", "unspecified"}:
+        boost -= 0.35
+        label = "年限偏高"
     return {
         "employment_boost": round(boost, 2),
         "employment_fit_label": label,
@@ -6332,14 +9162,346 @@ def salary_preference_for_job(job: dict, context: dict, strong_match_score: floa
     return {"salary_adjustment": 0.06, "salary_fit": "match", "salary_fit_label": "薪资可接受"}
 
 
-def rank_job_with_preferences(job: dict, direction_ids: list[str], weights: dict, region: str | None = None, watched_companies: set[str] | None = None) -> dict:
+def conversion_signal_label(value: str) -> str:
+    return {
+        "strong": "可转正",
+        "possible": "可能可转正",
+        "none": "明确无转正",
+        "unknown": "转正未知",
+    }.get(value or "unknown", "转正未知")
+
+
+def visa_signal_label(value: str) -> str:
+    return {
+        "possible": "工签可能",
+        "unclear": "工签待确认",
+        "unlikely": "工签风险",
+        "unknown": "工签未知",
+    }.get(value or "unknown", "工签未知")
+
+
+def language_signal_label(value: str) -> str:
+    return {
+        "chinese_friendly_possible": "中文友好可能",
+        "english_first": "英文为主",
+        "unknown": "语言未知",
+    }.get(value or "unknown", "语言未知")
+
+
+def job_tag_label(tag_id: str) -> str:
+    return USER_JOB_TAG_LABELS.get(tag_id, tag_id)
+
+
+def source_tag_for_job(source: str) -> str:
+    lowered = (source or "").lower()
+    if "company" in lowered or "ats" in lowered or "官网" in lowered or "careers@gov" in lowered:
+        return "source_official"
+    if "linkedin" in lowered:
+        return "source_linkedin"
+    if "internsg" in lowered:
+        return "source_internsg"
+    if "internship.sg" in lowered:
+        return "source_internship_sg"
+    if "cultjobs" in lowered:
+        return "source_cultjobs"
+    if any(value in lowered for value in ["创业", "startup", "glints", "nodeflair", "wellfound"]):
+        return "source_startup"
+    if "jobstreet" in lowered:
+        return "source_jobstreet"
+    if "indeed" in lowered:
+        return "source_indeed"
+    if "mycareersfuture" in lowered:
+        return "source_mycareersfuture"
+    if "google jobs" in lowered:
+        return "source_google_jobs"
+    return ""
+
+
+def freshness_tag_for_job(job: dict) -> str:
+    dates = [job.get("found_date"), job.get("batch_date"), job.get("recommended_date"), job.get("applied_date")]
+    parsed: list[dt.date] = []
+    for value in dates:
+        if not value:
+            continue
+        try:
+            parsed.append(dt.datetime.strptime(str(value)[:10], DATE_FMT).date())
+        except ValueError:
+            continue
+    if not parsed:
+        return ""
+    age_days = max(0, (dt.date.today() - max(parsed)).days)
+    if age_days <= 1:
+        return "fresh_today"
+    if age_days <= 7:
+        return "fresh_recent"
+    return "fresh_stale"
+
+
+def content_tag_ids_for_job(
+    job: dict,
+    matching_text: str | None = None,
+    direction_matches: dict[str, tuple[float, list[str]]] | None = None,
+) -> set[str]:
+    text = matching_text if matching_text is not None else job_matching_text(job)
+    title = clean_ai_detection_text(job.get("position") or "")
+    conflicting_function = bool(NON_TARGET_FUNCTION_TITLE_PATTERN.search(title))
+    tags: set[str] = set()
+    direction_matches = direction_matches if direction_matches is not None else {}
+    direction_scores = {}
+    for direction_id in ["ai-product", "ux-product-design", "user-research", "service-design", "product-ops", "growth-content"]:
+        if direction_id not in direction_matches:
+            direction_matches[direction_id] = direction_match_for_job(job, career_direction_by_id(direction_id), text)
+        direction_scores[direction_id] = direction_matches[direction_id][0]
+    title_has_ai_signal = any(
+        has_keyword(title, keyword)
+        for keyword in ["ai", "genai", "generative ai", "llm", "machine learning", "chatbot"]
+    )
+    role_specific_ai_signal = bool(re.search(
+        r"\b(support|develop|design|test|evaluate|implement|manage|analy[sz]e|work\s+(?:on|with)|use|apply)\b"
+        r".{0,80}\b(ai|genai|generative ai|llm|machine learning|chatbot)\b",
+        text,
+        flags=re.I,
+    ))
+    if ai_relevance_details(job, text)["is_ai_related"] and (
+        not conflicting_function or title_has_ai_signal or role_specific_ai_signal
+    ):
+        tags.add("ai_related")
+    product_role_terms = [
+        "product manager",
+        "product management",
+        "product design",
+        "product marketing",
+        "product development",
+        "product owner",
+        "product operations",
+        "product strategy",
+        "product roadmap",
+    ]
+    if has_keyword(title, "product") or (
+        not conflicting_function
+        and any(has_keyword(text, keyword) for keyword in product_role_terms)
+    ):
+        tags.add("product_related")
+    if any(direction_scores[item] > 0 for item in ["ux-product-design", "user-research", "service-design"]):
+        tags.add("ux_related")
+    if direction_scores["product-ops"] > 0:
+        tags.add("operations_related")
+    if direction_scores["growth-content"] > 0:
+        tags.add("marketing_related")
+    return tags
+
+
+def job_tag_ids_for_preferences(
+    job: dict,
+    region: str,
+    company_profile: dict | None = None,
+    matching_text: str | None = None,
+    direction_matches: dict[str, tuple[float, list[str]]] | None = None,
+) -> set[str]:
+    tags: set[str] = set()
+    employment = job.get("employment_type") or "Unknown"
+    employment_map = {
+        "Internship": "internship",
+        "Graduate": "graduate",
+        "Full-time": "full_time",
+        "Contract": "contract",
+    }
+    if employment in employment_map:
+        tags.add(employment_map[employment])
+
+    conversion = job.get("conversion_signal") or ("strong" if job.get("conversion_opportunity") else "unknown")
+    if conversion == "strong":
+        tags.add("conversion_strong")
+    elif conversion == "possible":
+        tags.add("conversion_possible")
+    elif conversion == "none":
+        tags.add("conversion_none")
+
+    visa = job.get("visa_sponsorship_signal") or "unknown"
+    if visa == "possible":
+        tags.add("visa_possible")
+    elif visa == "unclear":
+        tags.add("visa_unclear")
+    elif visa == "unlikely":
+        tags.add("visa_unlikely")
+
+    language = job.get("language_signal") or "unknown"
+    if language == "chinese_friendly_possible":
+        tags.add("chinese_friendly")
+    elif language == "english_first":
+        tags.add("english_first")
+
+    profile = company_profile or company_catalog_match_for_job(job.get("company") or "", region) or {}
+    company_group = profile.get("company_group")
+    if company_group in COMPANY_GROUP_VALUES:
+        tags.add(f"company_{company_group}")
+    if profile.get("sponsorship_signal") == "possible" and visa != "unlikely":
+        tags.add("visa_possible")
+    if "chinese" in str(profile.get("language_signal") or "").lower():
+        tags.add("chinese_friendly")
+
+    salary_fit = job.get("salary_fit") or "unknown"
+    if salary_fit in {"strong", "match"}:
+        tags.add("salary_match")
+    elif salary_fit == "low":
+        tags.add("salary_low")
+    elif salary_fit == "unknown":
+        tags.add("salary_unknown")
+
+    source_tag = source_tag_for_job(job.get("source") or "")
+    if source_tag:
+        tags.add(source_tag)
+    freshness_tag = freshness_tag_for_job(job)
+    if freshness_tag:
+        tags.add(freshness_tag)
+    if "experience_too_high" in set(job.get("eligibility_flags") or []):
+        tags.add("high_experience")
+    tags.update(content_tag_ids_for_job(job, matching_text, direction_matches))
+    return tags
+
+
+def user_tag_preference_for_job(
+    job: dict,
+    context: dict,
+    region: str,
+    company_profile: dict | None = None,
+    matching_text: str | None = None,
+    direction_matches: dict[str, tuple[float, list[str]]] | None = None,
+) -> dict:
+    all_tags = job_tag_ids_for_preferences(job, region, company_profile, matching_text, direction_matches)
+    preferred = [tag for tag in (context.get("preferred_job_tags") or []) if tag in USER_JOB_TAG_VALUES]
+    muted = [tag for tag in (context.get("muted_job_tags") or []) if tag in USER_JOB_TAG_VALUES]
+    preferred_hits = [tag for tag in preferred if tag in all_tags]
+    muted_hits = [tag for tag in muted if tag in all_tags]
+    lightweight_prefixes = ("source_", "fresh_")
+    lightweight_tags = {"salary_match", "salary_unknown", "salary_low"}
+    high_risk_mutes = {"visa_unlikely", "conversion_none", "high_experience"}
+    employment_mutes = {"internship", "graduate", "full_time", "contract"}
+    preferred_score = sum(
+        0.06 if tag.startswith(lightweight_prefixes) or tag in lightweight_tags else 0.16
+        for tag in preferred_hits
+    )
+    muted_score = sum(
+        0.42 if tag in high_risk_mutes else 0.28 if tag in employment_mutes else 0.2
+        for tag in muted_hits
+    )
+    adjustment = min(0.65, preferred_score) - min(1.2, muted_score)
+    tag_priority = preferred_score - (muted_score * 1.25)
+    return {
+        "job_tag_ids": sorted(all_tags),
+        "user_tag_matches": [{"id": tag, "label": job_tag_label(tag)} for tag in preferred_hits[:8]],
+        "user_tag_mutes": [{"id": tag, "label": job_tag_label(tag)} for tag in muted_hits[:6]],
+        "user_tag_adjustment": round(adjustment, 2),
+        "user_tag_priority": round(tag_priority, 2),
+    }
+
+
+def pathway_preference_for_job(job: dict, context: dict, region: str, company_profile: dict | None = None) -> dict:
+    conversion = job.get("conversion_signal") or ("strong" if job.get("conversion_opportunity") else "unknown")
+    visa = job.get("visa_sponsorship_signal") or "unknown"
+    language = job.get("language_signal") or "unknown"
+    company_profile = company_profile or company_catalog_match_for_job(job.get("company") or "", region) or {}
+    company_group = company_profile.get("company_group") or "other"
+    company_visa_possible = company_profile.get("sponsorship_signal") == "possible" and visa != "unlikely"
+    base_pathway = float(job.get("pathway_score") or 0)
+    if not base_pathway:
+        base_pathway = pathway_score_from_signals(job.get("employment_type") or "Unknown", conversion, visa, language, company_profile)
+
+    adjustment = max(-0.34, min(0.42, (base_pathway - 2.5) * 0.12))
+    tags: list[str] = []
+    questions: list[str] = []
+    if (context.get("career_goal") or "") == "sg_internship_to_fulltime":
+        if job.get("employment_type") == "Internship":
+            adjustment += 0.12
+        if conversion in {"strong", "possible"}:
+            adjustment += 0.12
+        if visa == "possible" or company_visa_possible:
+            adjustment += 0.12
+        if visa == "unlikely":
+            adjustment -= 0.24
+    if context.get("conversion_priority") == "high":
+        if conversion in {"strong", "possible"}:
+            adjustment += 0.14
+        elif conversion == "none":
+            adjustment -= 0.16
+    if context.get("sponsorship_priority") == "high":
+        if visa == "possible" or company_visa_possible:
+            adjustment += 0.14
+        elif visa == "unlikely":
+            adjustment -= 0.26
+    if context.get("language_preference") in {"chinese_friendly", "bilingual"}:
+        if language == "chinese_friendly_possible" or "chinese" in str(company_profile.get("language_signal") or "").lower():
+            adjustment += 0.12
+        elif context.get("language_preference") == "chinese_friendly" and language == "english_first":
+            adjustment -= 0.04
+    if company_group in set(context.get("preferred_company_groups") or []):
+        adjustment += 0.1
+
+    if conversion in {"strong", "possible"}:
+        tags.append(conversion_signal_label(conversion))
+    elif conversion == "none":
+        tags.append("明确无转正")
+    elif job.get("employment_type") == "Internship":
+        tags.append("转正待确认")
+        questions.append("问 HR：该实习是否有转正或 return offer 机制？")
+    if visa in {"possible", "unclear", "unlikely"}:
+        tags.append(visa_signal_label(visa))
+    elif company_profile.get("sponsorship_signal") == "possible":
+        tags.append("工签可能待确认")
+    elif region == "SG":
+        tags.append("工签待确认")
+        questions.append("问 HR：若转为正式岗位，公司是否支持 EP 或 S Pass？")
+    if language == "chinese_friendly_possible" or "chinese" in str(company_profile.get("language_signal") or "").lower():
+        tags.append("中文友好可能")
+    elif context.get("language_preference") in {"chinese_friendly", "bilingual"} and language == "unknown":
+        questions.append("面试确认：团队日常协作中是否可以使用中文？")
+    if company_group == "greater_china":
+        tags.append("大中华背景")
+    elif company_group == "ai_startup":
+        tags.append("AI/初创")
+    elif company_group == "sg_anchor":
+        tags.append("本地大厂")
+
+    evidence = list(job.get("pathway_evidence_json") or [])[:5]
+    if company_profile.get("recommend_reason"):
+        evidence.append(f"公司理由: {company_profile['recommend_reason']}")
+    if not evidence:
+        evidence.append("暂无明确转正/工签证据，请打开原 JD 人工确认。")
+    return {
+        "pathway_score": round(base_pathway, 2),
+        "pathway_adjustment": round(max(-0.5, min(0.65, adjustment)), 2),
+        "pathway_tags": list(dict.fromkeys(tags))[:6],
+        "pathway_questions": list(dict.fromkeys(questions))[:4],
+        "evidence": evidence[:6],
+        "conversion_signal_label": conversion_signal_label(conversion),
+        "visa_sponsorship_label": visa_signal_label(visa),
+        "language_signal_label": language_signal_label(language),
+        "company_group": company_group,
+    }
+
+
+def bounded_display_score(value: float) -> float:
+    return round(max(0.0, min(5.0, float(value or 0))), 1)
+
+
+def rank_job_with_preferences(
+    job: dict,
+    direction_ids: list[str],
+    weights: dict,
+    region: str | None = None,
+    watched_companies: set[str] | None = None,
+    context: dict | None = None,
+) -> dict:
     matched = []
     boost = 0.0
+    matching_text = job_matching_text(job)
+    direction_matches: dict[str, tuple[float, list[str]]] = {}
     for direction_id in direction_ids:
         direction = career_direction_by_id(direction_id)
         if not direction:
             continue
-        match_score, hits = direction_match_for_job(job, direction)
+        match_score, hits = direction_match_for_job(job, direction, matching_text)
+        direction_matches[direction_id] = (match_score, hits)
         if match_score <= 0:
             continue
         weight = float(weights.get(direction_id, 1.0) or 1.0)
@@ -6347,8 +9509,16 @@ def rank_job_with_preferences(job: dict, direction_ids: list[str], weights: dict
         matched.append({"id": direction_id, "label": direction["label"], "keywords": hits, "score": round(match_score, 2)})
     boost = round(min(0.8, boost), 2)
     out = dict(job)
+    direction_mismatch_adjustment = (
+        -0.55
+        if direction_ids
+        and not matched
+        and NON_TARGET_FUNCTION_TITLE_PATTERN.search(out.get("position") or "")
+        else 0.0
+    )
     code = active_region_code(region or job.get("region"))
-    region_fit = region_fit_for_job(out, code, watched_companies or set())
+    context = context or active_region_context(code)
+    region_fit = region_fit_for_job(out, code, watched_companies or set(), context)
     out["base_score"] = float(job.get("score") or 0)
     out["preference_boost"] = boost
     out["region_fit"] = region_fit["region_fit"]
@@ -6356,19 +9526,73 @@ def rank_job_with_preferences(job: dict, direction_ids: list[str], weights: dict
     out["location_reason"] = region_fit["location_reason"]
     out["company_boost"] = region_fit["company_boost"]
     out["work_auth_fit"] = region_fit["work_auth_fit"]
-    context = active_region_context(code)
+    detected_employment = detect_employment_type(out.get("position") or "", out.get("jd_text") or "", out.get("job_type") or "")
+    if detected_employment != "Unknown":
+        out["employment_type"] = detected_employment
     employment = employment_preference_for_job(out, context)
     strong_match_score = out["base_score"] + boost + out["company_boost"] + employment["employment_boost"]
     salary = salary_preference_for_job(out, context, strong_match_score)
+    company_profile = company_catalog_match_for_job(out.get("company") or "", code) or {}
+    pathway = pathway_preference_for_job(out, context, code, company_profile)
+    freshness = job_listing_freshness(out)
     conversion_boost = 0.0
     if out.get("conversion_opportunity") and context.get("employment_priority") in {"internship", "both", "unspecified"}:
         conversion_boost = 0.14
     out.update(employment)
     out.update(salary)
+    out.update(pathway)
+    out["listing_freshness_status"] = freshness["status"]
+    out["listing_freshness_label"] = freshness["label"]
+    out["listing_checked_age_days"] = freshness["checked_age_days"]
+    out["freshness_adjustment"] = freshness["adjustment"]
+    out["pathway_candidate"] = is_pathway_recommendation_candidate(out)
+    tag_preference = user_tag_preference_for_job(
+        out,
+        context,
+        code,
+        company_profile,
+        matching_text,
+        direction_matches,
+    )
+    out.update(tag_preference)
     out["conversion_boost"] = round(conversion_boost, 2)
-    out["rank_score"] = round(out["base_score"] + boost + out["company_boost"] + out["employment_boost"] + out["salary_adjustment"] + conversion_boost, 2)
+    out["direction_mismatch_adjustment"] = direction_mismatch_adjustment
+    out["rank_score"] = round(
+        out["base_score"]
+        + boost
+        + direction_mismatch_adjustment
+        + out["company_boost"]
+        + out["employment_boost"]
+        + out["salary_adjustment"]
+        + conversion_boost
+        + out["pathway_adjustment"]
+        + out["user_tag_adjustment"]
+        + out["freshness_adjustment"],
+        2,
+    )
+    out["fit_score"] = bounded_display_score(out["rank_score"])
+    out["score_breakdown"] = {
+        "base": round(out["base_score"], 2),
+        "direction": boost,
+        "direction_mismatch": direction_mismatch_adjustment,
+        "company": out["company_boost"],
+        "employment": out["employment_boost"],
+        "salary": out["salary_adjustment"],
+        "conversion": out["conversion_boost"],
+        "pathway": out["pathway_adjustment"],
+        "user_tags": out["user_tag_adjustment"],
+        "freshness": out["freshness_adjustment"],
+    }
     out["matched_directions"] = matched
     out["fit_reasons"] = [f"{item['label']}: {', '.join(item['keywords'][:4])}" for item in matched]
+    if out.get("user_tag_matches"):
+        out["fit_reasons"].append("你选的标签: " + "、".join(item["label"] for item in out["user_tag_matches"][:4]))
+    if out.get("user_tag_mutes"):
+        out["fit_reasons"].append("少看标签: " + "、".join(item["label"] for item in out["user_tag_mutes"][:3]))
+    if out.get("pathway_tags"):
+        out["fit_reasons"].append("留新加坡路径: " + "、".join(out["pathway_tags"][:4]))
+    if out.get("pathway_candidate") and out.get("base_score", 0) < 3.0:
+        out["fit_reasons"].append("留新路径补充候选")
     if out["company_boost"]:
         out["fit_reasons"].append("Watched company")
     if out.get("employment_fit_label"):
@@ -6379,7 +9603,181 @@ def rank_job_with_preferences(job: dict, direction_ids: list[str], weights: dict
         out["fit_reasons"].append("可转正机会")
     if out["location_reason"]:
         out["fit_reasons"].append(out["location_reason"])
+    risk_reasons = []
+    if direction_mismatch_adjustment:
+        risk_reasons.append("方向偏离")
+    if out.get("user_tag_mutes"):
+        risk_reasons.append("少看标签: " + "、".join(item["label"] for item in out["user_tag_mutes"][:3]))
+    if out.get("employment_fit_label") == "年限偏高":
+        risk_reasons.append(out["employment_fit_label"])
+    if out.get("salary_fit") == "low" and out.get("salary_fit_label"):
+        risk_reasons.append(out["salary_fit_label"])
+    if out.get("listing_freshness_status") in {"aging", "verify", "unknown", "likely_closed"}:
+        risk_reasons.append(out.get("listing_freshness_label") or "需确认有效")
+    ordered_reasons = list(dict.fromkeys([*risk_reasons, *out["fit_reasons"]]))
+    out["recommendation_reason"] = " · ".join(ordered_reasons[:4]) or "按基础评分推荐，建议打开 JD 确认转正和工签信息。"
     return out
+
+
+def apply_preference_scores_to_jobs(jobs: list[dict], region: str | None = None) -> list[dict]:
+    direction_ids, direction_source = active_preference_direction_ids()
+    preferences = get_career_preferences()
+    region_code = active_region_code(region) if region else None
+    watched = watched_company_keys(region_code) if region_code else set()
+    dismissed = dismissed_company_keys(region_code) if region_code else set()
+    watched_by_region: dict[str, set[str]] = {}
+    dismissed_by_region: dict[str, set[str]] = {}
+    context_by_region: dict[str, dict] = {}
+    ranked = []
+    for job in jobs:
+        job_region = region_code or active_region_code(job.get("region") or job.get("source_region") or None)
+        if region_code:
+            watched_for_job = watched
+            dismissed_for_job = dismissed
+        else:
+            if job_region not in watched_by_region:
+                watched_by_region[job_region] = watched_company_keys(job_region)
+                dismissed_by_region[job_region] = dismissed_company_keys(job_region)
+            watched_for_job = watched_by_region[job_region]
+            dismissed_for_job = dismissed_by_region[job_region]
+        if job_region not in context_by_region:
+            context_by_region[job_region] = active_region_context(job_region)
+        item = rank_job_with_preferences(
+            job,
+            direction_ids,
+            preferences["direction_weights"],
+            job_region,
+            watched_for_job,
+            context_by_region[job_region],
+        )
+        item["direction_source"] = direction_source
+        item["company_watched_by_user"] = is_watched_company_job(item, watched_for_job)
+        item["company_hidden_by_watchlist"] = is_watched_company_job(item, dismissed_for_job)
+        item["supplemental_candidate"] = (
+            is_recommendation_available(item)
+            and not item["company_watched_by_user"]
+            and not item["company_hidden_by_watchlist"]
+        )
+        ranked.append(item)
+    return ranked
+
+
+COMPACT_JOB_OMIT_FIELDS = {"jd_text", "jd_cn_text", "jd_hash"}
+WORKBENCH_JOB_FIELDS = {
+    "id", "company", "position", "source", "status",
+    "employment_type", "found_date", "batch_date", "updated_at", "last_checked_at", "applied_date",
+    "fit_score", "rank_score", "base_score", "score", "pathway_score", "pathway_tags",
+    "user_tag_matches", "user_tag_mutes",
+    "salary_fit", "salary_fit_label", "salary_min", "salary_max", "salary_currency", "salary_period",
+    "recommendation_reason", "match_notes", "source_count", "supplemental_candidate",
+    "company_watched_by_user", "company_hidden_by_watchlist", "next_step",
+    "conversion_signal", "visa_sponsorship_signal", "language_signal",
+    "listing_freshness_status", "listing_freshness_label",
+}
+
+
+def request_uses_compact_jobs(params: dict[str, list[str]] | None) -> bool:
+    value = ((params or {}).get("compact") or [""])[0]
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def compact_job_payload(job: dict) -> dict:
+    out = {key: value for key, value in job.items() if key not in COMPACT_JOB_OMIT_FIELDS}
+    out.setdefault("dedupe_key", job_dedupe_key(job))
+    return out
+
+
+def compact_job_payloads(jobs: list[dict]) -> list[dict]:
+    return [compact_job_payload(job) for job in jobs]
+
+
+def workbench_job_payload(job: dict) -> dict:
+    out = {key: value for key, value in job.items() if key in WORKBENCH_JOB_FIELDS}
+    alternate_ids = [
+        {"id": item.get("id")}
+        for item in (job.get("alternate_links") or [])
+        if item.get("id") is not None
+    ]
+    if alternate_ids:
+        out["alternate_links"] = alternate_ids
+    return out
+
+
+def workbench_job_payloads(jobs: list[dict]) -> list[dict]:
+    return [workbench_job_payload(job) for job in jobs]
+
+
+def list_jobs_payload(params: dict[str, list[str]]) -> list[dict]:
+    region = (params.get("region") or [""])[0] or None
+    jobs = apply_preference_scores_to_jobs(list_jobs(params), region)
+    return compact_job_payloads(jobs) if request_uses_compact_jobs(params) else jobs
+
+
+def job_payload(job: dict) -> dict:
+    return apply_preference_scores_to_jobs([job], job.get("region") or None)[0]
+
+
+def recommendation_payload_from_ranked_jobs(
+    ranked_jobs: list[dict],
+    region: str,
+    limit: int,
+    context: dict,
+    direction_ids: list[str],
+    direction_source: str,
+    exclude_keywords: list[str],
+    compact: bool = False,
+) -> dict:
+    candidates = []
+    for job in ranked_jobs:
+        if not is_recommendation_available(job):
+            continue
+        if job.get("company_watched_by_user") or job.get("company_hidden_by_watchlist"):
+            continue
+        combined = f"{job.get('company', '')} {job.get('position', '')} {job.get('jd_text', '')}".lower()
+        if any(has_keyword(combined, keyword) for keyword in exclude_keywords):
+            continue
+        ranked = dict(job)
+        ranked["company_watched_by_user"] = False
+        ranked["company_hidden_by_watchlist"] = False
+        candidates.append(ranked)
+
+    current_date = today()
+    has_tag_preferences = bool(context.get("preferred_job_tags") or context.get("muted_job_tags"))
+    candidates.sort(
+        key=lambda item: (
+            not bool(item.get("user_tag_mutes")) if has_tag_preferences else True,
+            not bool(item.get("direction_mismatch_adjustment")),
+            item.get("batch_date") == current_date or item.get("recommended_date") == current_date,
+            float(item.get("user_tag_priority") or 0) if has_tag_preferences else 0,
+            float(item.get("user_tag_adjustment") or 0) if has_tag_preferences else 0,
+            float(item.get("rank_score") or 0),
+            float(item.get("base_score") or 0),
+            item.get("updated_at") or "",
+        ),
+        reverse=True,
+    )
+    candidates = collapse_duplicate_job_groups(candidates)
+    preferred = [tag for tag in (context.get("preferred_job_tags") or []) if tag in USER_JOB_TAG_VALUES]
+    muted = [tag for tag in (context.get("muted_job_tags") or []) if tag in USER_JOB_TAG_VALUES]
+    selected_jobs = candidates[:limit]
+    if compact:
+        selected_jobs = compact_job_payloads(selected_jobs)
+    return {
+        "date": current_date,
+        "region": region,
+        "region_label": REGION_CONFIGS[region]["label"],
+        "jobs": selected_jobs,
+        "active_direction_ids": direction_ids,
+        "direction_source": direction_source,
+        "limit": limit,
+        "tag_scope": {
+            "preferred_tags": [{"id": tag, "label": job_tag_label(tag)} for tag in preferred],
+            "muted_tags": [{"id": tag, "label": job_tag_label(tag)} for tag in muted],
+            "matched_jobs": sum(1 for item in candidates if item.get("user_tag_matches")),
+            "muted_jobs": sum(1 for item in candidates if item.get("user_tag_mutes")),
+            "effective": has_tag_preferences,
+        },
+    }
 
 
 def list_today_recommendations(params: dict[str, list[str]] | None = None) -> dict:
@@ -6388,41 +9786,34 @@ def list_today_recommendations(params: dict[str, list[str]] | None = None) -> di
         limit = int((params.get("limit") or ["20"])[0])
     except ValueError:
         limit = 20
-    limit = max(1, min(50, limit))
+    limit = max(1, min(200, limit))
     region = active_region_code((params.get("region") or [""])[0] or None)
     city = (params.get("city") or [active_region_context(region).get("city") or ""])[0]
+    context = active_region_context(region)
     direction_ids, direction_source = active_preference_direction_ids()
     preferences = get_career_preferences()
-    exclude_keywords = preferences["exclude_keywords"]
-    watched = watched_company_keys(region)
-    candidates = []
-    for job in list_jobs({"region": [region], "city": [city]}):
-        if not is_recommendation_available(job):
+    primary_jobs = list_jobs({"region": [region], "city": [city]})
+    fresh_jobs = list_jobs({"date": [today()], "region": [region], "city": [city]})
+    merged_jobs: list[dict] = []
+    seen_jobs: set[str] = set()
+    for job in [*primary_jobs, *fresh_jobs]:
+        key = str(job.get("id") or canonical_job_url(job.get("source") or "", job.get("url") or "", job.get("external_job_id")))
+        if key and key in seen_jobs:
             continue
-        combined = f"{job.get('company', '')} {job.get('position', '')} {job.get('jd_text', '')}".lower()
-        if any(has_keyword(combined, keyword) for keyword in exclude_keywords):
-            continue
-        candidates.append(rank_job_with_preferences(job, direction_ids, preferences["direction_weights"], region, watched))
-
-    current_date = today()
-    candidates.sort(
-        key=lambda item: (
-            item.get("batch_date") == current_date or item.get("recommended_date") == current_date,
-            float(item.get("rank_score") or 0),
-            float(item.get("base_score") or 0),
-            item.get("updated_at") or "",
-        ),
-        reverse=True,
+        if key:
+            seen_jobs.add(key)
+        merged_jobs.append(job)
+    ranked_jobs = apply_preference_scores_to_jobs(merged_jobs, region)
+    return recommendation_payload_from_ranked_jobs(
+        ranked_jobs,
+        region,
+        limit,
+        context,
+        direction_ids,
+        direction_source,
+        preferences["exclude_keywords"],
+        request_uses_compact_jobs(params),
     )
-    return {
-        "date": current_date,
-        "region": region,
-        "region_label": REGION_CONFIGS[region]["label"],
-        "jobs": candidates[:limit],
-        "active_direction_ids": direction_ids,
-        "direction_source": direction_source,
-        "limit": limit,
-    }
 
 
 def daily_status(region: str | None = None) -> dict:
@@ -6438,6 +9829,422 @@ def daily_status(region: str | None = None) -> dict:
         "latest_run": latest,
         "latest_successful_run": successful,
         "auto_run_mode": "open_app_once_per_day",
+    }
+
+
+def days_since_date(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.strptime(str(value)[:10], DATE_FMT).date()
+    except ValueError:
+        return None
+    return max(0, (dt.date.today() - parsed).days)
+
+
+def number_like(value, default=0) -> float:
+    try:
+        return float(value or default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def next_step_for_job(job: dict) -> str:
+    status = job.get("status") or ""
+    if status == "Apply Queue":
+        return "今天可以打开填表助手，最终提交前人工确认。"
+    if status == "Applied":
+        days = days_since_date(job.get("applied_date"))
+        action_bucket = application_action_bucket(job)
+        if action_bucket == "stale":
+            return f"已投 {days} 天仍无更新，建议最后确认一次后归档。"
+        if action_bucket == "followup":
+            return f"已投 {days} 天，可以准备一次轻量跟进。"
+        if job.get("last_followup_at"):
+            return f"已记录第 {int(job.get('followup_count') or 0)} 次跟进，等待反馈。"
+        return "已投递，先记录状态，等待反馈。"
+    if status == "Follow Up":
+        return "需要跟进，建议补充联系记录。"
+    if status == "Recommended":
+        return "先看转正、工签和语言证据，再决定是否加入队列。"
+    return "打开岗位详情确认下一步。"
+
+
+def application_action_bucket(job: dict) -> str:
+    status = job.get("status") or ""
+    if status == "Follow Up":
+        return "followup"
+    if status != "Applied":
+        return ""
+    days = days_since_date(job.get("applied_date"))
+    if days is None or days < 3:
+        return "waiting"
+    followup_days = days_since_date(job.get("last_followup_at"))
+    followup_count = int(job.get("followup_count") or 0)
+    if followup_days is not None:
+        if followup_days < 7:
+            return "waiting"
+        return "followup" if followup_count < 2 else "stale"
+    if days <= 14:
+        return "followup"
+    return "stale"
+
+
+def scan_run_summary_text(run: dict | None) -> str:
+    if not run:
+        return "今天还没有扫描记录。"
+    failures = len(run.get("failures_json") or [])
+    status = run.get("status") or "pending"
+    label = {
+        "pending": "等待",
+        "running": "扫描中",
+        "success": "成功",
+        "partial": "部分成功",
+        "limited": "受限",
+        "failed": "失败",
+        "interrupted": "已中断",
+    }.get(status, status)
+    new_count = int(run.get("new_count") or 0)
+    updated_count = int(run.get("updated_count") or 0)
+    duplicate_count = int(run.get("duplicate_count") or 0)
+    if new_count or updated_count or duplicate_count:
+        return (
+            f"{label}：{new_count} 条新发现，{updated_count} 条更新，"
+            f"合并 {duplicate_count} 条重复，失败/受限 {failures} 条。"
+        )
+    return f"{label}：抓到 {run.get('scanned_count') or 0} 条，保存/更新 {run.get('saved_count') or 0} 条，失败/受限 {failures} 条。"
+
+
+def scan_overview(scan_payload: dict) -> dict:
+    run = scan_payload.get("run") or {}
+    status = run.get("status") or "pending"
+    run_sources = run.get("sources") or []
+    source_rows = {
+        item.get("source"): {
+            "source": item.get("source"),
+            "mode": item.get("mode") or scan_source_mode(item.get("source") or ""),
+            "status": "pending",
+            "scanned_count": 0,
+            "saved_count": 0,
+            "new_count": 0,
+            "updated_count": 0,
+            "duplicate_count": 0,
+            "failure_count": 0,
+        }
+        for item in (scan_payload.get("expected_source_details") or [])
+        if item.get("source")
+    }
+    for source in run_sources:
+        name = SCAN_SOURCE_NAME_ALIASES.get(source.get("source"), source.get("source"))
+        if not name or (name in RETIRED_AUTO_SCAN_SOURCES and name not in source_rows):
+            continue
+        source_rows[name] = {
+            "source": name,
+            "mode": source.get("mode") or scan_source_mode(name),
+            "status": source.get("status") or "pending",
+            "scanned_count": source.get("scanned_count") or 0,
+            "saved_count": source.get("saved_count") or 0,
+            "new_count": source.get("new_count") or 0,
+            "updated_count": source.get("updated_count") or 0,
+            "duplicate_count": source.get("duplicate_count") or 0,
+            "failure_count": source.get("failure_count") or 0,
+        }
+    sources = list(source_rows.values())
+    limited_sources = [
+        source.get("source")
+        for source in sources
+        if source.get("status") in {"failed", "limited", "partial"} or number_like(source.get("failure_count")) > 0
+    ]
+    latest_success = scan_payload.get("latest_successful_run") or {}
+    return {
+        "status": status,
+        "summary": scan_run_summary_text(run),
+        "running": bool(scan_payload.get("running")),
+        "source_count": len(sources),
+        "limited_count": len(limited_sources),
+        "failure_count": len(run.get("failures_json") or []),
+        "new_count": run.get("new_count") or 0,
+        "updated_count": run.get("updated_count") or 0,
+        "duplicate_count": run.get("duplicate_count") or 0,
+        "last_success": latest_success.get("finished_at") or latest_success.get("started_at"),
+        "sources": sources,
+    }
+
+
+def workbench_actions(
+    summary_payload: dict,
+    recommendations: list[dict],
+    queue_jobs: list[dict],
+    followups: list[dict],
+    scan_payload: dict,
+    stale_applications: list[dict] | None = None,
+) -> list[dict]:
+    actions: list[dict] = []
+    context = load_user_context()
+    if not context.get("resume_analyzed"):
+        actions.append({
+            "kind": "resume",
+            "title": "先分析简历",
+            "body": "让系统按你的经历预选方向，后续推荐会更稳。",
+            "view": "fit",
+            "priority": 95,
+        })
+    if recommendations:
+        top = recommendations[:3]
+        actions.append({
+            "kind": "recommendations",
+            "title": f"先看 {len(recommendations)} 个每日推荐岗位",
+            "body": "这些岗位已避开关注公司刷屏，并按标签、留新路径和分数排序。",
+            "view": "today",
+            "priority": 90,
+            "job_ids": [job.get("id") for job in top if job.get("id")],
+        })
+    if queue_jobs:
+        actions.append({
+            "kind": "queue",
+            "title": f"投递队列里有 {len(queue_jobs)} 个岗位",
+            "body": "优先处理已加入队列的岗位，减少反复筛选。",
+            "view": "queue",
+            "priority": 82,
+        })
+    if followups:
+        actions.append({
+            "kind": "followup",
+            "title": f"{len(followups)} 个岗位需要跟进",
+            "body": "已投递超过 3 天的岗位可以做一次轻量 follow-up。",
+            "view": "tracker",
+            "priority": 78,
+        })
+    if stale_applications:
+        actions.append({
+            "kind": "stale",
+            "title": f"{len(stale_applications)} 个长期无回复岗位待整理",
+            "body": "做最后一次确认，仍无进展的可以暂停，保留记录但不占每日注意力。",
+            "view": "tracker",
+            "priority": 72,
+        })
+    run = scan_payload.get("run") or {}
+    if not run:
+        actions.append({
+            "kind": "scan",
+            "title": "今天还没有扫描",
+            "body": "需要新机会时再启动扫描，受限来源不会阻塞主流程。",
+            "view": "today",
+            "priority": 64,
+        })
+    elif run.get("status") in {"failed", "limited", "partial"}:
+        actions.append({
+            "kind": "scan_limited",
+            "title": "扫描部分受限",
+            "body": "主流程仍可用；需要时展开扫描详情查看来源。",
+            "view": "today",
+            "priority": 58,
+        })
+    if not actions and summary_payload.get("today_applied"):
+        actions.append({
+            "kind": "done",
+            "title": "今天已经有投递记录",
+            "body": "可以复盘已投岗位，或继续看 Top 推荐。",
+            "view": "tracker",
+            "priority": 40,
+        })
+    return sorted(actions, key=lambda item: item.get("priority", 0), reverse=True)[:5]
+
+
+def is_watched_company_job(job: dict, watched_terms: set[str]) -> bool:
+    company_text = f"{job.get('company') or ''} {job.get('name') or ''}"
+    from_watched_source = clean_text(job.get("source") or "").lower() == "关注公司公开来源"
+    return from_watched_source or (
+        bool(watched_terms)
+        and any(company_text_has_term(company_text, term) for term in watched_terms)
+    )
+
+
+def diversified_workbench_recommendations(jobs: list[dict], watched_terms: set[str], limit: int = 20) -> list[dict]:
+    selected: list[dict] = []
+    overflow: list[dict] = []
+    company_counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
+    source_limit = max(3, int(limit * 0.3 + 0.999))
+    for job in jobs:
+        company_key = normalize_company_phrase(job.get("company") or "")
+        source_key = clean_text(job.get("source") or "Unknown").lower()
+        is_watched = is_watched_company_job(job, watched_terms)
+        if is_watched:
+            continue
+        if company_counts.get(company_key, 0) >= 2 or source_counts.get(source_key, 0) >= source_limit:
+            overflow.append(job)
+            continue
+        selected.append(job)
+        company_counts[company_key] = company_counts.get(company_key, 0) + 1
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
+        if len(selected) >= limit:
+            return selected
+    for job in overflow:
+        if len(selected) >= limit:
+            break
+        company_key = normalize_company_phrase(job.get("company") or "")
+        if company_counts.get(company_key, 0) >= 2:
+            continue
+        selected.append(job)
+        company_counts[company_key] = company_counts.get(company_key, 0) + 1
+    return selected
+
+
+def job_discovery_age_days(job: dict) -> int | None:
+    for key in ["found_date", "batch_date", "recommended_date"]:
+        age = days_since_date(job.get(key))
+        if age is not None:
+            return age
+    return None
+
+
+def workbench_recommendation_bucket(
+    jobs: list[dict],
+    watched_terms: set[str],
+    limit: int = 20,
+    *,
+    max_age_days: int | None = None,
+    today_only: bool = False,
+    exclude_ids: set[int] | None = None,
+    exclude_dedupe_keys: set[str] | None = None,
+    exclude_statuses: set[str] | None = None,
+    exclude_company_terms: set[str] | None = None,
+) -> list[dict]:
+    exclude_ids = exclude_ids or set()
+    exclude_dedupe_keys = exclude_dedupe_keys or set()
+    exclude_statuses = exclude_statuses or set()
+    exclude_company_terms = exclude_company_terms or set()
+    candidates: list[dict] = []
+    for job in jobs:
+        if job.get("id") in exclude_ids or job_dedupe_key(job) in exclude_dedupe_keys or job.get("status") in exclude_statuses:
+            continue
+        if is_watched_company_job(job, exclude_company_terms):
+            continue
+        age = job_discovery_age_days(job)
+        if today_only and age != 0:
+            continue
+        if max_age_days is not None and (age is None or age > max_age_days):
+            continue
+        candidates.append(job)
+    if max_age_days is not None and not today_only:
+        candidates.sort(
+            key=lambda item: (
+                not bool(item.get("user_tag_mutes")),
+                float(item.get("rank_score") or item.get("score") or 0),
+                float(item.get("user_tag_priority") or 0),
+                float(item.get("pathway_score") or 0),
+                float(item.get("base_score") or item.get("score") or 0),
+                item.get("updated_at") or "",
+            ),
+            reverse=True,
+        )
+    return diversified_workbench_recommendations(candidates, set(), limit)
+
+
+def workbench_payload(params: dict[str, list[str]] | None = None) -> dict:
+    params = params or {}
+    region = active_region_code((params.get("region") or [""])[0] or None)
+    city = (params.get("city") or [active_region_context(region).get("city") or ""])[0]
+    context = active_region_context(region)
+    direction_ids, direction_source = active_preference_direction_ids()
+    preferences = get_career_preferences()
+    jobs = apply_preference_scores_to_jobs(list_jobs({"region": [region], "city": [city]}), region)
+    recommendations = recommendation_payload_from_ranked_jobs(
+        jobs,
+        region,
+        120,
+        context,
+        direction_ids,
+        direction_source,
+        preferences["exclude_keywords"],
+    )
+    summary_payload = summary(region, include_ai=False)
+    watched_terms = watched_company_keys(region)
+    queue_jobs = [job for job in jobs if job.get("status") == "Apply Queue"]
+    today_date = today()
+    today_applied = [job for job in jobs if job.get("status") == "Applied" and job.get("applied_date") == today_date]
+    followups = [job for job in jobs if application_action_bucket(job) == "followup"]
+    stale_applications = [job for job in jobs if application_action_bucket(job) == "stale"]
+    scan_payload = scan_status_payload(region=region)
+    recommendation_jobs = recommendations.get("jobs", [])
+    watched_company_jobs = diversified_workbench_recommendations(
+        [job for job in recommendation_jobs if is_watched_company_job(job, watched_terms)],
+        set(),
+        6,
+    )
+    today_new_recommendations = workbench_recommendation_bucket(
+        recommendation_jobs,
+        watched_terms,
+        20,
+        today_only=True,
+        exclude_company_terms=watched_terms,
+    )
+    today_new_ids = {job.get("id") for job in today_new_recommendations if job.get("id")}
+    today_new_dedupe_keys = {job_dedupe_key(job) for job in today_new_recommendations}
+    weekly_unqueued_recommendations = workbench_recommendation_bucket(
+        recommendation_jobs,
+        watched_terms,
+        20,
+        max_age_days=6,
+        exclude_ids=today_new_ids,
+        exclude_dedupe_keys=today_new_dedupe_keys,
+        exclude_statuses={"Apply Queue"},
+        exclude_company_terms=watched_terms,
+    )
+    today_discovered_jobs = collapse_duplicate_job_groups(
+        [job for job in jobs if job_discovery_age_days(job) == 0]
+    )
+    today_actionable_jobs = [
+        job for job in recommendation_jobs
+        if job_discovery_age_days(job) == 0 and not is_watched_company_job(job, watched_terms)
+    ]
+    discovery_summary = {
+        "today_discovered": len(today_discovered_jobs),
+        "today_actionable": len(today_actionable_jobs),
+        "today_shown": len(today_new_recommendations),
+    }
+    top_recommendations = today_new_recommendations or weekly_unqueued_recommendations
+    queue_preview = sorted(queue_jobs, key=lambda job: job.get("updated_at") or "", reverse=True)[:5]
+    followup_preview = sorted(followups, key=lambda job: job.get("applied_date") or job.get("updated_at") or "", reverse=True)[:5]
+    recommendation_sections = [
+        {
+            "id": "today_new",
+            "label": "今天新发现",
+            "count": len(today_new_recommendations),
+            "limit": 20,
+        },
+        {
+            "id": "weekly_unqueued",
+            "label": "近一周未投",
+            "count": len(weekly_unqueued_recommendations),
+            "limit": 20,
+        },
+    ]
+    compact_recommendations = {
+        **recommendations,
+        "jobs": [],
+    }
+    return {
+        "date": today_date,
+        "region": region,
+        "city": city,
+        "summary": summary_payload,
+        "today_actions": workbench_actions(summary_payload, top_recommendations, queue_jobs, followups, scan_payload, stale_applications),
+        "top_recommendations": workbench_job_payloads(top_recommendations),
+        "today_new_recommendations": workbench_job_payloads(today_new_recommendations),
+        "weekly_unqueued_recommendations": workbench_job_payloads(weekly_unqueued_recommendations),
+        "discovery_summary": discovery_summary,
+        "recommendation_sections": recommendation_sections,
+        "watched_company_jobs": workbench_job_payloads(watched_company_jobs),
+        "queue_preview": [workbench_job_payload({**job, "next_step": next_step_for_job(job)}) for job in queue_preview],
+        "today_applied": [workbench_job_payload({**job, "next_step": next_step_for_job(job)}) for job in today_applied[:5]],
+        "followups": [workbench_job_payload({**job, "next_step": next_step_for_job(job)}) for job in followup_preview],
+        "followup_count": len(followups),
+        "stale_application_count": len(stale_applications),
+        "scan_overview": scan_overview(scan_payload),
+        "active_context": active_region_context(region),
+        "recommendations": compact_recommendations,
     }
 
 
@@ -6474,9 +10281,9 @@ def run_daily_scan(force: bool = False, triggered_by: str = "auto_open", async_m
     }
 
 
-def summary() -> dict:
+def summary(region: str | None = None, include_ai: bool = True) -> dict:
     current_date = today()
-    region = active_region_code()
+    region = active_region_code(region)
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -6505,6 +10312,11 @@ def summary() -> dict:
             """,
             (current_date, current_date, current_date, region),
         ).fetchone()
+    if include_ai:
+        ai_recommended = len(list_ai_jobs({"limit": ["20"], "region": [region]}))
+    else:
+        latest_run = latest_scan_run(current_date, region) or {}
+        ai_recommended = latest_run.get("ai_recommended_count") or 0
     return {
         "date": current_date,
         "region": region,
@@ -6523,7 +10335,7 @@ def summary() -> dict:
         "daily_target": 15,
         "recommendation_target": 20,
         "ai_recommendation_target": 20,
-        "ai_recommended": len(list_ai_jobs({"limit": ["20"], "region": [region]})),
+        "ai_recommended": ai_recommended,
     }
 
 
@@ -6532,9 +10344,12 @@ def set_decision(job_id: int, decision: str, notes: str = "") -> dict:
         "Apply": "Apply Queue",
         "Watch": "Watch",
         "Drop": "Dropped",
+        "Pause": "Closed",
+        "FollowUpSent": "Applied",
+        "Restore": "Recommended",
     }
     if decision not in decision_map:
-        raise ValueError("Decision must be Apply, Watch, or Drop.")
+        raise ValueError("Unsupported job decision.")
 
     job = get_job(job_id)
     status = decision_map[decision]
@@ -6542,6 +10357,22 @@ def set_decision(job_id: int, decision: str, notes: str = "") -> dict:
     applied_date = None
     resume_path = job.get("resume_path")
     cover_path = job.get("cover_letter_path")
+    if decision == "Restore":
+        status = "Recommended" if float(job.get("score") or 0) >= 3.0 or is_pathway_recommendation_candidate(job) else "New"
+    if decision == "FollowUpSent":
+        with get_db() as conn:
+            conn.execute(
+                """
+                update jobs set
+                    status='Applied',
+                    last_followup_at=?,
+                    followup_count=coalesce(followup_count, 0) + 1,
+                    updated_at=?
+                where id=?
+                """,
+                (today(), stamp, job_id),
+            )
+        return get_job(job_id)
     if decision == "Apply":
         hard_flags = {"citizen_or_pr_only", "local_only", "clearance_required"}
         blocked = hard_flags.intersection(set(job.get("eligibility_flags") or []))
@@ -6680,6 +10511,60 @@ def add_watch_company(payload: dict) -> dict:
                 user_added,
                 priority,
                 notes,
+            ),
+        )
+        row = conn.execute(
+            "select * from watch_companies where region=? and company=?",
+            (code, company),
+        ).fetchone()
+    return row_to_dict(row)
+
+
+def dismiss_watch_company(payload: dict) -> dict:
+    code = active_region_code(payload.get("region"))
+    company = (payload.get("company") or "").strip()
+    if not company:
+        raise ValueError("Company name is required.")
+    catalog_item = company_catalog_item(company, code) or {}
+    url = validate_http_url(payload.get("url") or catalog_item.get("url") or catalog_item.get("official_careers_url") or "")
+    focus = (payload.get("focus") or catalog_item.get("focus") or "Temporarily hidden company").strip()
+    source = (payload.get("source") or catalog_item.get("source") or "Company Site").strip()
+    city_tags = payload.get("city_tags") or catalog_item.get("city_tags") or [active_region_context(code).get("city") or REGION_CONFIGS[code]["default_city"]]
+    aliases = json_list(payload.get("aliases") or payload.get("aliases_json") or catalog_item.get("aliases") or [])
+    aliases = company_alias_values(company, {"aliases": aliases})
+    company_type = (payload.get("company_type") or catalog_item.get("company_type") or "Company").strip()
+    priority = int(payload.get("priority") or catalog_item.get("priority") or 50)
+    stamp = now_iso()
+    with get_db() as conn:
+        conn.execute(
+            """
+            insert into watch_companies(
+                company, source, url, focus, region, city_tags_json, company_type,
+                aliases_json, user_added, priority, notes, last_checked_at, status
+            )
+            values(?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, 'Dropped')
+            on conflict(region, company) do update set
+                source=excluded.source,
+                url=excluded.url,
+                focus=excluded.focus,
+                city_tags_json=excluded.city_tags_json,
+                company_type=excluded.company_type,
+                aliases_json=excluded.aliases_json,
+                priority=excluded.priority,
+                last_checked_at=excluded.last_checked_at,
+                status='Dropped'
+            """,
+            (
+                company,
+                source,
+                url,
+                focus,
+                code,
+                json.dumps(city_tags, ensure_ascii=False),
+                company_type,
+                json.dumps(aliases, ensure_ascii=False),
+                priority,
+                stamp,
             ),
         )
         row = conn.execute(
@@ -7135,8 +11020,15 @@ def sync_notion(job_id: int | None = None) -> dict:
 
 def json_response(handler: SimpleHTTPRequestHandler, data: dict | list, status: HTTPStatus = HTTPStatus.OK) -> None:
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    accepts_gzip = "gzip" in (handler.headers.get("Accept-Encoding", "").lower())
+    compressed = accepts_gzip and len(body) >= 1024
+    if compressed:
+        body = gzip.compress(body, compresslevel=5)
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Vary", "Accept-Encoding")
+    if compressed:
+        handler.send_header("Content-Encoding", "gzip")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
@@ -7406,6 +11298,8 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 json_response(self, auth_config_payload())
             elif parsed.path == "/api/summary":
                 json_response(self, summary())
+            elif parsed.path == "/api/workbench":
+                json_response(self, workbench_payload(params))
             elif parsed.path == "/api/regions":
                 json_response(self, regions_payload())
             elif parsed.path == "/api/profile-options":
@@ -7439,16 +11333,16 @@ class CareerHandler(SimpleHTTPRequestHandler):
                 scan_run_id = int(parsed.path.rstrip("/").split("/")[-1])
                 json_response(self, scan_status_payload(scan_run_id))
             elif parsed.path == "/api/jobs":
-                json_response(self, list_jobs(params))
+                json_response(self, list_jobs_payload(params))
             elif parsed.path == "/api/jobs/ai":
                 json_response(self, list_ai_jobs(params))
             elif parsed.path.startswith("/api/jobs/"):
                 translate_match = re.match(r"^/api/jobs/(\d+)/translate$", parsed.path)
                 if translate_match:
-                    json_response(self, ensure_job_translation(int(translate_match.group(1))))
+                    json_response(self, job_payload(ensure_job_translation(int(translate_match.group(1)))))
                 else:
                     job_id = int(parsed.path.rstrip("/").split("/")[-1])
-                    json_response(self, get_job(job_id))
+                    json_response(self, job_payload(get_job(job_id)))
             elif parsed.path == "/api/watchlist":
                 json_response(self, watchlist((params.get("region") or [""])[0] or None))
             elif parsed.path == "/api/notion-schema":
@@ -7485,7 +11379,7 @@ class CareerHandler(SimpleHTTPRequestHandler):
             ensure_cloud_state_loaded()
             sync_after_request = should_sync_after_request("POST", parsed.path)
             if parsed.path == "/api/jobs":
-                json_response(self, upsert_job(read_json(self)), HTTPStatus.CREATED)
+                json_response(self, job_payload(upsert_job(read_json(self))), HTTPStatus.CREATED)
                 return
 
             if parsed.path == "/api/profile":
@@ -7498,6 +11392,10 @@ class CareerHandler(SimpleHTTPRequestHandler):
 
             if parsed.path == "/api/watchlist":
                 json_response(self, add_watch_company(read_json(self)), HTTPStatus.CREATED)
+                return
+
+            if parsed.path == "/api/watchlist/dismiss":
+                json_response(self, dismiss_watch_company(read_json(self)), HTTPStatus.CREATED)
                 return
 
             if parsed.path == "/api/resumes":
@@ -7553,12 +11451,12 @@ class CareerHandler(SimpleHTTPRequestHandler):
             if decision_match:
                 payload = read_json(self)
                 job = set_decision(int(decision_match.group(1)), payload.get("decision", ""), payload.get("notes", ""))
-                json_response(self, job)
+                json_response(self, job_payload(job))
                 return
 
             applied_match = re.match(r"^/api/jobs/(\d+)/confirm-applied$", parsed.path)
             if applied_match:
-                json_response(self, confirm_applied(int(applied_match.group(1))))
+                json_response(self, job_payload(confirm_applied(int(applied_match.group(1)))))
                 return
 
             assist_match = re.match(r"^/api/jobs/(\d+)/apply-assist$", parsed.path)
@@ -7568,7 +11466,7 @@ class CareerHandler(SimpleHTTPRequestHandler):
 
             translate_match = re.match(r"^/api/jobs/(\d+)/translate$", parsed.path)
             if translate_match:
-                json_response(self, ensure_job_translation(int(translate_match.group(1))))
+                json_response(self, job_payload(ensure_job_translation(int(translate_match.group(1)))))
                 return
 
             notion_sync_match = re.match(r"^/api/notion/sync(?:/(\d+))?$", parsed.path)

@@ -16,6 +16,8 @@ python -m playwright install chromium
 http://127.0.0.1:8787
 ```
 
+macOS 建议双击一次 `Install-Local-Autostart.command`。安装后，Job Assistant 会在登录时启动，进程异常退出时自动恢复；日常只需双击 `Open-Job-Assistant.command` 打开网页。
+
 如果页面打不开，优先重新运行：
 
 ```powershell
