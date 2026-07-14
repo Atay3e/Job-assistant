@@ -2522,6 +2522,59 @@ pre {
   min-width: 0;
 }
 
+.queue-priority-group {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-priority-group + .queue-priority-group {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.queue-priority-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.queue-priority-head h3,
+.queue-priority-head p {
+  margin: 0;
+}
+
+.queue-priority-head h3 {
+  font-size: 14px;
+}
+
+.queue-priority-head p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.queue-priority-head > span {
+  min-width: 26px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f7f9f8;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.queue-priority-today .queue-priority-head h3 {
+  color: var(--accent-dark);
+}
+
+.queue-priority-review .queue-priority-head h3 {
+  color: var(--amber);
+}
+
 .today-recommendation-footer {
   display: flex;
   align-items: center;

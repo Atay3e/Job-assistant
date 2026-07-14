@@ -367,6 +367,26 @@ class ParserTests(unittest.TestCase):
 
         self.assertEqual([job["id"] for job in ordered], [2, 1, 3])
 
+    def test_queue_decision_separates_today_next_and_review(self):
+        reference = server.dt.date(2026, 7, 14)
+        today_job = {"fit_score": 4.4, "updated_at": "2026-07-14T09:00:00"}
+        next_job = {"fit_score": 3.6, "updated_at": "2026-07-14T09:00:00"}
+        muted_job = {
+            "fit_score": 4.8,
+            "user_tag_mutes": [{"id": "software_engineering", "label": "软件工程"}],
+            "updated_at": "2026-07-14T09:00:00",
+        }
+        mismatched_job = {
+            "fit_score": 4.8,
+            "direction_mismatch_adjustment": -0.55,
+            "updated_at": "2026-07-14T09:00:00",
+        }
+
+        self.assertEqual(server.queue_decision(today_job, reference)["priority"], "today")
+        self.assertEqual(server.queue_decision(next_job, reference)["priority"], "next")
+        self.assertEqual(server.queue_decision(muted_job, reference)["priority"], "review")
+        self.assertEqual(server.queue_decision(mismatched_job, reference)["priority"], "review")
+
     def test_parse_linkedin_fixture(self):
         jobs = server.parse_linkedin_jobs_from_html(self.fixture("linkedin.html"), "product design intern", 5)
         self.assertEqual(jobs[0]["external_job_id"], "4411111111")
@@ -1897,6 +1917,8 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(payload["queue_preview"][0]["id"], urgent["id"])
         self.assertEqual(payload["queue_preview"][0]["application_deadline"], deadline.strftime(server.DATE_FMT))
         self.assertEqual(payload["queue_preview"][0]["deadline_status"], "urgent")
+        self.assertEqual(payload["queue_preview"][0]["queue_priority"], "today")
+        self.assertEqual(payload["queue_preview"][0]["queue_priority_label"], "今天优先")
         self.assertIn("优先投递", payload["queue_preview"][0]["next_step"])
 
     def test_supplemental_recommendations_put_direction_mismatches_after_aligned_jobs(self):

@@ -2735,7 +2735,39 @@ def application_deadline_status(value: str | None, reference_date: dt.date | Non
     return {"code": "scheduled", "label": f"截止 {deadline.strftime('%m-%d')}", "days_remaining": remaining}
 
 
+def queue_decision(job: dict, reference_date: dt.date | None = None) -> dict:
+    reference = reference_date or dt.date.today()
+    deadline = application_deadline_status(job.get("application_deadline"), reference)
+    fit_score = float(job.get("fit_score") or job.get("rank_score") or job.get("score") or 0)
+    freshness = str(job.get("listing_freshness_status") or "")
+    try:
+        queued_date = dt.datetime.fromisoformat(str(job.get("updated_at") or "")).date()
+        queue_age = max(0, (reference - queued_date).days)
+    except ValueError:
+        queue_age = 0
+
+    if deadline["code"] == "expired":
+        return {"priority": "review", "label": "先确认再投", "reason": "截止日期已过，先确认岗位是否仍开放。", "order": 2}
+    if deadline["code"] in {"today", "urgent", "soon"}:
+        return {"priority": "today", "label": "今天优先", "reason": f"{deadline['label']}，建议优先完成投递。", "order": 0}
+    if freshness in {"aging", "verify", "unknown", "likely_closed"}:
+        return {"priority": "review", "label": "先确认再投", "reason": "岗位新鲜度需确认，先检查原链接是否仍开放。", "order": 2}
+    if job.get("user_tag_mutes"):
+        labels = "、".join(item.get("label") or item.get("id") or "" for item in job["user_tag_mutes"][:2])
+        return {"priority": "review", "label": "先确认再投", "reason": f"命中少看标签{f'：{labels}' if labels else ''}，确认后再投。", "order": 2}
+    if job.get("direction_mismatch_adjustment"):
+        return {"priority": "review", "label": "先确认再投", "reason": "与当前求职方向偏离，确认仍值得投入时间。", "order": 2}
+    if fit_score >= 4.0:
+        return {"priority": "today", "label": "今天优先", "reason": f"方向一致，综合 {fit_score:.1f}，建议今天完成。", "order": 0}
+    if queue_age >= 7 and fit_score >= 3.3:
+        return {"priority": "today", "label": "今天优先", "reason": f"已在队列 {queue_age} 天，今天决定投递或移出。", "order": 0}
+    if fit_score >= 3.3:
+        return {"priority": "next", "label": "接下来", "reason": "匹配可投，处理完今天优先项后再看。", "order": 1}
+    return {"priority": "review", "label": "先确认再投", "reason": f"综合 {fit_score:.1f}，先确认岗位要求和投入价值。", "order": 2}
+
+
 def queue_job_sort_key(job: dict, reference_date: dt.date | None = None) -> tuple:
+    decision = queue_decision(job, reference_date)
     deadline = application_deadline_status(job.get("application_deadline"), reference_date)
     status_order = {"today": 0, "urgent": 1, "soon": 2, "scheduled": 3, "unknown": 4, "expired": 5}
     remaining = deadline["days_remaining"] if deadline["days_remaining"] is not None else 999999
@@ -2746,6 +2778,7 @@ def queue_job_sort_key(job: dict, reference_date: dt.date | None = None) -> tupl
     except ValueError:
         updated = 0
     return (
+        decision["order"],
         status_order[deadline["code"]],
         remaining,
         -float(job.get("rank_score") or job.get("score") or 0),
@@ -9803,6 +9836,11 @@ def rank_job_with_preferences(
     out["deadline_status"] = deadline["code"]
     out["deadline_label"] = deadline["label"]
     out["deadline_days_remaining"] = deadline["days_remaining"]
+    if out.get("status") == "Apply Queue":
+        queue = queue_decision(out)
+        out["queue_priority"] = queue["priority"]
+        out["queue_priority_label"] = queue["label"]
+        out["queue_reason"] = queue["reason"]
     out["decision_summary"] = job_decision_summary(out)
     return out
 
@@ -9853,14 +9891,15 @@ def apply_preference_scores_to_jobs(jobs: list[dict], region: str | None = None)
 COMPACT_JOB_OMIT_FIELDS = {"jd_text", "jd_cn_text", "jd_hash"}
 WORKBENCH_JOB_FIELDS = {
     "id", "company", "position", "source", "status",
-    "employment_type", "found_date", "batch_date", "updated_at", "last_checked_at", "applied_date",
-    "fit_score", "rank_score", "score", "pathway_score", "pathway_tags",
+    "employment_type", "found_date", "updated_at", "applied_date",
+    "fit_score", "rank_score", "pathway_score", "pathway_tags",
     "user_tag_matches", "user_tag_mutes",
     "salary_fit", "salary_fit_label", "salary_min", "salary_max", "salary_currency", "salary_period",
     "decision_summary", "recommendation_reason", "source_count", "supplemental_candidate",
     "company_watched_by_user", "company_hidden_by_watchlist", "next_step",
     "listing_freshness_status", "listing_freshness_label",
     "application_deadline", "deadline_status", "deadline_label", "deadline_days_remaining",
+    "queue_priority", "queue_priority_label", "queue_reason",
 }
 
 
@@ -10048,6 +10087,8 @@ def next_step_for_job(job: dict) -> str:
             return "今天截止，优先完成投递。"
         if deadline["code"] in {"urgent", "soon"}:
             return f"{deadline['label']}，建议优先投递。"
+        if job.get("queue_reason"):
+            return str(job["queue_reason"])
         return "今天可以打开填表助手，最终提交前人工确认。"
     if status == "Applied":
         days = days_since_date(job.get("applied_date"))
@@ -10196,10 +10237,19 @@ def workbench_actions(
             "job_ids": [job.get("id") for job in top if job.get("id")],
         })
     if queue_jobs:
+        priority_counts = {"today": 0, "next": 0, "review": 0}
+        for job in queue_jobs:
+            priority = str(job.get("queue_priority") or queue_decision(job)["priority"])
+            priority_counts[priority] = priority_counts.get(priority, 0) + 1
+        title = (
+            f"今天先投 {priority_counts['today']} 个岗位"
+            if priority_counts["today"]
+            else f"投递队列里有 {len(queue_jobs)} 个岗位"
+        )
         actions.append({
             "kind": "queue",
-            "title": f"投递队列里有 {len(queue_jobs)} 个岗位",
-            "body": "优先处理已加入队列的岗位，减少反复筛选。",
+            "title": title,
+            "body": f"共 {len(queue_jobs)} 个待投；{priority_counts['review']} 个建议先确认方向或有效性。",
             "view": "queue",
             "priority": 82,
         })

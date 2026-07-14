@@ -726,6 +726,9 @@ function deadlineInfo(job) {
 }
 
 function compareQueueUrgency(a, b) {
+  const queueOrder = { today: 0, next: 1, review: 2 };
+  const queueDifference = (queueOrder[a.queue_priority] ?? 1) - (queueOrder[b.queue_priority] ?? 1);
+  if (queueDifference) return queueDifference;
   const order = { today: 0, urgent: 1, soon: 2, scheduled: 3, unknown: 4, expired: 5 };
   const left = deadlineInfo(a);
   const right = deadlineInfo(b);
@@ -1158,6 +1161,7 @@ function jobCard(job, compact = false, options = {}) {
 function compactJobTags(job, limit = 5) {
   const deadline = deadlineInfo(job);
   const tags = [
+    job.queue_priority_label,
     deadline.label,
     employmentTypeLabel(job.employment_type || "Unknown"),
     ...(job.pathway_tags || []),
@@ -1169,7 +1173,7 @@ function compactJobTags(job, limit = 5) {
   return `
     ${unique.map((tag) => {
       const text = String(tag);
-      const cls = text.includes("风险") || text.includes("偏低") || text.includes("无转正") || text.includes("待确认") || text.includes("未知") || text.includes("截止")
+      const cls = text.includes("风险") || text.includes("偏低") || text.includes("无转正") || text.includes("待确认") || text.includes("未知") || text.includes("截止") || text.includes("先确认")
         ? "warn"
         : (text.includes("工签") || text.includes("转正") || text.includes("中文") ? "pathway-badge" : "quiet-badge");
       return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
@@ -1745,8 +1749,25 @@ function renderJobs() {
   const todayApplied = state.jobs.filter((job) => job.status === "Applied" && job.applied_date === today);
   const queueList = document.getElementById("queueList");
   queueList.setAttribute("aria-busy", "false");
+  const queueGroupConfig = [
+    { id: "today", label: "今天优先", hint: "方向匹配、临期或已经积压，今天先处理。" },
+    { id: "next", label: "接下来", hint: "可以投，完成优先项后继续。" },
+    { id: "review", label: "先确认再投", hint: "方向、标签、有效性或投入价值需要再确认。" },
+  ];
+  const queueGroups = queueGroupConfig.map((group) => ({
+    ...group,
+    jobs: queue.filter((job) => (job.queue_priority || "next") === group.id),
+  }));
   queueList.innerHTML = queue.length
-    ? queue.map((job) => compactJobRow(job, { queue: true })).join("")
+    ? queueGroups.filter((group) => group.jobs.length).map((group) => `
+      <section class="queue-priority-group queue-priority-${group.id}">
+        <header class="queue-priority-head">
+          <div><h3>${escapeHtml(group.label)}</h3><p>${escapeHtml(group.hint)}</p></div>
+          <span>${group.jobs.length}</span>
+        </header>
+        <div class="inbox-list">${group.jobs.map((job) => compactJobRow(job, { queue: true })).join("")}</div>
+      </section>
+    `).join("")
     : emptyState("投递队列为空。你可以从今日推荐里选择“加入投递”。");
   const queueListStatus = document.getElementById("queueListStatus");
   if (queueListStatus) {
@@ -1756,7 +1777,9 @@ function renderJobs() {
     } else if (state.jobsPanel === "recommendations") {
       queueListStatus.textContent = `${fitJobs.length} 个推荐 · ${queue.length} 个待投递`;
     } else {
-      queueListStatus.textContent = `${queue.length} 个待投递 · 已完整显示`;
+      const todayCount = queueGroups.find((group) => group.id === "today")?.jobs.length || 0;
+      const reviewCount = queueGroups.find((group) => group.id === "review")?.jobs.length || 0;
+      queueListStatus.textContent = `${todayCount} 今天优先 · ${reviewCount} 先确认 · 共 ${queue.length}`;
     }
   }
   document.getElementById("queueMiniCount").textContent = `${queue.length} 队列 · ${todayApplied.length} 已投`;
@@ -1816,11 +1839,12 @@ function filterTrackerJobs() {
         .some((value) => String(value || "").toLowerCase().includes(query))) return false;
       return true;
     })
-    .sort((a, b) =>
-      (state.trackerStatus === "all" ? (actionPriority[b.status] || 0) - (actionPriority[a.status] || 0) : 0)
-      || timelineDate(b).localeCompare(timelineDate(a))
-      || displayJobScore(b) - displayJobScore(a)
-    );
+    .sort((a, b) => {
+      if (a.status === "Apply Queue" && b.status === "Apply Queue") return compareQueueUrgency(a, b);
+      return (state.trackerStatus === "all" ? (actionPriority[b.status] || 0) - (actionPriority[a.status] || 0) : 0)
+        || timelineDate(b).localeCompare(timelineDate(a))
+        || displayJobScore(b) - displayJobScore(a);
+    });
 }
 
 function trackerNextStep(job) {
@@ -1829,6 +1853,7 @@ function trackerNextStep(job) {
     if (deadline.code === "expired") return "截止日期已过，请先确认岗位是否仍开放。";
     if (deadline.code === "today") return "今天截止，优先完成投递。";
     if (["urgent", "soon"].includes(deadline.code)) return `${deadline.label}，建议优先投递。`;
+    if (job.queue_reason) return job.queue_reason;
     return "打开填表助手，完成后确认已投。";
   }
   if (job.status === "Follow Up") return "今天安排一次轻量跟进。";
