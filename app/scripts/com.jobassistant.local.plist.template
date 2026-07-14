@@ -23,7 +23,7 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
-  <integer>30</integer>
+  <integer>10</integer>
   <key>StandardOutPath</key>
   <string>__LOG_DIR__/service.out.log</string>
   <key>StandardErrorPath</key>

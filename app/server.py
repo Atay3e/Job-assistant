@@ -2470,6 +2470,7 @@ def setup_db() -> None:
                 language_signal text not null default 'unknown',
                 pathway_score real not null default 0,
                 pathway_evidence_json text not null default '[]',
+                application_deadline text,
                 jd_text text not null,
                 jd_hash text not null,
                 score real not null default 0,
@@ -2622,6 +2623,7 @@ def setup_db() -> None:
                 ensure_column(conn, "jobs", "language_signal", "text not null default 'unknown'")
                 ensure_column(conn, "jobs", "pathway_score", "real not null default 0")
                 ensure_column(conn, "jobs", "pathway_evidence_json", "text not null default '[]'")
+                ensure_column(conn, "jobs", "application_deadline", "text")
                 ensure_column(conn, "jobs", "last_followup_at", "text")
                 ensure_column(conn, "jobs", "followup_count", "integer not null default 0")
                 ensure_column(conn, "applications", "assist_payload_path", "text")
@@ -2640,6 +2642,7 @@ def setup_db() -> None:
                 migrate_watch_companies_table(conn)
                 seed_default_watch_companies(conn)
                 backfill_job_metadata(conn)
+                backfill_application_deadlines(conn)
         INITIALIZED_DB_PATHS.add(str(db_path))
 
 
@@ -2675,6 +2678,84 @@ def clean_text(value: str) -> str:
     value = re.sub(r"<[^>]+>", " ", value)
     value = unescape(value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+DEADLINE_MONTH_PATTERN = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+APPLICATION_DEADLINE_PATTERN = re.compile(
+    rf"\b(?:closing\s+date|application\s+deadline|applications?\s+(?:close|closing)|apply\s+by)"
+    rf"\s*[:\-–]?\s*(?:on\s+)?(?P<date>"
+    rf"\d{{1,2}}[\s./-]+{DEADLINE_MONTH_PATTERN}[\s,./-]+\d{{4}}|"
+    rf"{DEADLINE_MONTH_PATTERN}\s+\d{{1,2}}(?:st|nd|rd|th)?[,]?\s+\d{{4}}|"
+    rf"\d{{4}}-\d{{1,2}}-\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})\b",
+    re.I,
+)
+
+
+def normalize_application_deadline(value: str, reference_date: dt.date | None = None) -> str:
+    raw = re.sub(r"(?i)(\d)(?:st|nd|rd|th)\b", r"\1", clean_text(value)).strip(" ,.;")
+    if not raw:
+        return ""
+    parsed = None
+    for date_format in ["%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"]:
+        try:
+            parsed = dt.datetime.strptime(raw, date_format).date()
+            break
+        except ValueError:
+            continue
+    if not parsed:
+        return ""
+    reference = reference_date or dt.date.today()
+    if parsed.year < 2000 or parsed.year > reference.year + 5:
+        return ""
+    return parsed.strftime(DATE_FMT)
+
+
+def extract_application_deadline(text: str, reference_date: dt.date | None = None) -> str:
+    match = APPLICATION_DEADLINE_PATTERN.search(clean_text(text))
+    return normalize_application_deadline(match.group("date"), reference_date) if match else ""
+
+
+def application_deadline_status(value: str | None, reference_date: dt.date | None = None) -> dict:
+    try:
+        deadline = dt.datetime.strptime(str(value or "")[:10], DATE_FMT).date()
+    except ValueError:
+        return {"code": "unknown", "label": "", "days_remaining": None}
+    remaining = (deadline - (reference_date or dt.date.today())).days
+    if remaining < 0:
+        return {"code": "expired", "label": "截止日期已过", "days_remaining": remaining}
+    if remaining == 0:
+        return {"code": "today", "label": "今天截止", "days_remaining": 0}
+    if remaining <= 3:
+        return {"code": "urgent", "label": f"{remaining} 天后截止", "days_remaining": remaining}
+    if remaining <= 7:
+        return {"code": "soon", "label": f"{remaining} 天后截止", "days_remaining": remaining}
+    return {"code": "scheduled", "label": f"截止 {deadline.strftime('%m-%d')}", "days_remaining": remaining}
+
+
+def queue_job_sort_key(job: dict, reference_date: dt.date | None = None) -> tuple:
+    deadline = application_deadline_status(job.get("application_deadline"), reference_date)
+    status_order = {"today": 0, "urgent": 1, "soon": 2, "scheduled": 3, "unknown": 4, "expired": 5}
+    remaining = deadline["days_remaining"] if deadline["days_remaining"] is not None else 999999
+    if deadline["code"] == "expired":
+        remaining = abs(remaining)
+    try:
+        updated = dt.datetime.fromisoformat(str(job.get("updated_at") or "")).timestamp()
+    except ValueError:
+        updated = 0
+    return (
+        status_order[deadline["code"]],
+        remaining,
+        -float(job.get("rank_score") or job.get("score") or 0),
+        -updated,
+    )
+
+
+def deadline_recommendation_priority(job: dict, reference_date: dt.date | None = None) -> int:
+    deadline = application_deadline_status(job.get("application_deadline"), reference_date)
+    return 8 - int(deadline["days_remaining"] or 0) if deadline["code"] in {"today", "urgent", "soon"} else 0
 
 
 def http_get(url: str, timeout: int = 25, retries: int = 1) -> str:
@@ -4483,6 +4564,16 @@ def backfill_job_metadata(conn: sqlite3.Connection) -> None:
                 row["id"],
             ),
         )
+
+
+def backfill_application_deadlines(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "select id, jd_text from jobs where coalesce(application_deadline, '') = '' and jd_text != ''"
+    ).fetchall()
+    for row in rows:
+        deadline = extract_application_deadline(row["jd_text"] or "")
+        if deadline:
+            conn.execute("update jobs set application_deadline=? where id=?", (deadline, row["id"]))
 
 
 def keyword_score(text: str, keywords: list[str], full_points: int) -> float:
@@ -8518,6 +8609,10 @@ def upsert_job(payload: dict) -> dict:
         jd_text = "JD not pasted yet. Preserve URL and update JD before drafting."
 
     metadata = job_metadata(position, jd_text, job_type, region, company, source)
+    application_deadline = (
+        normalize_application_deadline(str(payload.get("application_deadline") or ""))
+        or extract_application_deadline(jd_text)
+    )
     for key in ["salary_min", "salary_max", "salary_currency", "salary_period", "salary_text", "salary_fit"]:
         if key in payload and payload.get(key) not in {None, ""}:
             metadata[key] = payload[key]
@@ -8562,6 +8657,7 @@ def upsert_job(payload: dict) -> dict:
                     language_signal=?,
                     pathway_score=?,
                     pathway_evidence_json=?,
+                    application_deadline=coalesce(?, application_deadline),
                     jd_text=?,
                     jd_hash=?,
                     score=?,
@@ -8597,6 +8693,7 @@ def upsert_job(payload: dict) -> dict:
                     metadata["language_signal"],
                     metadata["pathway_score"],
                     json.dumps(metadata["pathway_evidence_json"], ensure_ascii=False),
+                    application_deadline or None,
                     jd_text,
                     jd_hash,
                     score,
@@ -8618,11 +8715,12 @@ def upsert_job(payload: dict) -> dict:
                     job_type, employment_type, conversion_opportunity, salary_min, salary_max,
                     salary_currency, salary_period, salary_text, salary_fit,
                     conversion_signal, visa_sponsorship_signal, language_signal, pathway_score, pathway_evidence_json,
+                    application_deadline,
                     jd_text, jd_hash,
                     score, status, eligibility_flags, match_notes, found_date, batch_date,
                     recommended_date, last_checked_at, resume_path, cover_letter_path, created_at, updated_at
                 )
-                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     company,
@@ -8649,6 +8747,7 @@ def upsert_job(payload: dict) -> dict:
                     metadata["language_signal"],
                     metadata["pathway_score"],
                     json.dumps(metadata["pathway_evidence_json"], ensure_ascii=False),
+                    application_deadline or None,
                     jd_text,
                     jd_hash,
                     score,
@@ -8752,9 +8851,25 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(query, values).fetchall()
         pathway_rows = []
+        deadline_rows = []
         state_rows = []
         if region_filter and not status and not date_filter:
             code = active_region_code(region_filter)
+            deadline_rows = conn.execute(
+                """
+                select * from jobs
+                where region=?
+                  and status in ('New', 'Recommended')
+                  and application_deadline between ? and ?
+                order by application_deadline, score desc
+                limit 100
+                """,
+                (
+                    code,
+                    today(),
+                    (dt.date.today() + dt.timedelta(days=7)).strftime(DATE_FMT),
+                ),
+            ).fetchall()
             pathway_query = """
                 select * from jobs
                 where region=?
@@ -8777,6 +8892,10 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
     jobs = [row_to_dict(row) for row in rows]
     seen_ids = {job.get("id") for job in jobs}
     for job in (row_to_dict(row) for row in state_rows):
+        if job.get("id") not in seen_ids:
+            jobs.append(job)
+            seen_ids.add(job.get("id"))
+    for job in (row_to_dict(row) for row in deadline_rows):
         if job.get("id") not in seen_ids:
             jobs.append(job)
             seen_ids.add(job.get("id"))
@@ -9680,6 +9799,10 @@ def rank_job_with_preferences(
         risk_reasons.append(out.get("listing_freshness_label") or "需确认有效")
     ordered_reasons = list(dict.fromkeys([*risk_reasons, *out["fit_reasons"]]))
     out["recommendation_reason"] = " · ".join(ordered_reasons[:4]) or "按基础评分推荐，建议打开 JD 确认转正和工签信息。"
+    deadline = application_deadline_status(out.get("application_deadline"))
+    out["deadline_status"] = deadline["code"]
+    out["deadline_label"] = deadline["label"]
+    out["deadline_days_remaining"] = deadline["days_remaining"]
     out["decision_summary"] = job_decision_summary(out)
     return out
 
@@ -9731,13 +9854,13 @@ COMPACT_JOB_OMIT_FIELDS = {"jd_text", "jd_cn_text", "jd_hash"}
 WORKBENCH_JOB_FIELDS = {
     "id", "company", "position", "source", "status",
     "employment_type", "found_date", "batch_date", "updated_at", "last_checked_at", "applied_date",
-    "fit_score", "rank_score", "base_score", "score", "pathway_score", "pathway_tags",
+    "fit_score", "rank_score", "score", "pathway_score", "pathway_tags",
     "user_tag_matches", "user_tag_mutes",
     "salary_fit", "salary_fit_label", "salary_min", "salary_max", "salary_currency", "salary_period",
     "decision_summary", "recommendation_reason", "source_count", "supplemental_candidate",
     "company_watched_by_user", "company_hidden_by_watchlist", "next_step",
-    "conversion_signal", "visa_sponsorship_signal", "language_signal",
     "listing_freshness_status", "listing_freshness_label",
+    "application_deadline", "deadline_status", "deadline_label", "deadline_days_remaining",
 }
 
 
@@ -9812,6 +9935,7 @@ def recommendation_payload_from_ranked_jobs(
         key=lambda item: (
             not bool(item.get("user_tag_mutes")) if has_tag_preferences else True,
             not bool(item.get("direction_mismatch_adjustment")),
+            deadline_recommendation_priority(item),
             item.get("batch_date") == current_date or item.get("recommended_date") == current_date,
             float(item.get("user_tag_priority") or 0) if has_tag_preferences else 0,
             float(item.get("user_tag_adjustment") or 0) if has_tag_preferences else 0,
@@ -9917,6 +10041,13 @@ def number_like(value, default=0) -> float:
 def next_step_for_job(job: dict) -> str:
     status = job.get("status") or ""
     if status == "Apply Queue":
+        deadline = application_deadline_status(job.get("application_deadline"))
+        if deadline["code"] == "expired":
+            return "截止日期已过，请先确认岗位是否仍开放。"
+        if deadline["code"] == "today":
+            return "今天截止，优先完成投递。"
+        if deadline["code"] in {"urgent", "soon"}:
+            return f"{deadline['label']}，建议优先投递。"
         return "今天可以打开填表助手，最终提交前人工确认。"
     if status == "Applied":
         days = days_since_date(job.get("applied_date"))
@@ -10270,7 +10401,7 @@ def workbench_payload(params: dict[str, list[str]] | None = None) -> dict:
         "today_shown": len(today_new_recommendations),
     }
     top_recommendations = today_new_recommendations or weekly_unqueued_recommendations
-    queue_preview = sorted(queue_jobs, key=lambda job: job.get("updated_at") or "", reverse=True)[:5]
+    queue_preview = sorted(queue_jobs, key=queue_job_sort_key)[:5]
     followup_preview = sorted(followups, key=lambda job: job.get("applied_date") or job.get("updated_at") or "", reverse=True)[:5]
     recommendation_sections = [
         {

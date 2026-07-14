@@ -714,6 +714,30 @@ function daysSince(value) {
   return Math.max(0, Math.floor((today - day) / 86400000));
 }
 
+function deadlineInfo(job) {
+  const code = String(job.deadline_status || "unknown");
+  const label = String(job.deadline_label || "");
+  const days = job.deadline_days_remaining;
+  return {
+    code,
+    label,
+    days: days === null || days === undefined ? null : Number(days),
+  };
+}
+
+function compareQueueUrgency(a, b) {
+  const order = { today: 0, urgent: 1, soon: 2, scheduled: 3, unknown: 4, expired: 5 };
+  const left = deadlineInfo(a);
+  const right = deadlineInfo(b);
+  const statusDifference = (order[left.code] ?? 4) - (order[right.code] ?? 4);
+  if (statusDifference) return statusDifference;
+  if (left.days !== null && right.days !== null && left.days !== right.days) {
+    return left.code === "expired" ? Math.abs(left.days) - Math.abs(right.days) : left.days - right.days;
+  }
+  return dateToTime(b.updated_at || b.batch_date || b.found_date) - dateToTime(a.updated_at || a.batch_date || a.found_date)
+    || displayJobScore(b) - displayJobScore(a);
+}
+
 function freshnessInfo(job) {
   const foundDays = daysSince(job.found_date);
   const updatedDays = daysSince(job.last_checked_at || job.updated_at || job.batch_date);
@@ -1084,6 +1108,10 @@ function jobCard(job, compact = false, options = {}) {
   const sourceCountBadge = Number(job.source_count || 1) > 1
     ? `<span class="badge source-count-badge">${Number(job.source_count)} 个来源</span>`
     : "";
+  const deadline = deadlineInfo(job);
+  const deadlineBadge = deadline.label
+    ? `<span class="badge ${["today", "urgent", "soon", "expired"].includes(deadline.code) ? "warn" : "quiet-badge"}">${escapeHtml(deadline.label)}</span>`
+    : "";
   const dateMeta = [
     `发现 ${job.found_date || "-"}`,
     `更新 ${(job.updated_at || job.last_checked_at || "").slice(0, 10) || "-"}`,
@@ -1105,7 +1133,7 @@ function jobCard(job, compact = false, options = {}) {
           ${freshnessBadge}
         </div>
         <div class="job-meta">${escapeHtml(dateMeta)}</div>
-        <div class="badge-row">${regionBadge}${employmentBadge}${conversionBadge}${pathwayBadges}${userTagBadges}${mutedTagBadges}${salaryBadge}${fitBadge}${companyBadge}${aiBadge}${matched}${badges}${draftLinks}</div>
+        <div class="badge-row">${deadlineBadge}${regionBadge}${employmentBadge}${conversionBadge}${pathwayBadges}${userTagBadges}${mutedTagBadges}${salaryBadge}${fitBadge}${companyBadge}${aiBadge}${matched}${badges}${draftLinks}</div>
         <a class="job-url" href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">${escapeHtml(job.url)}</a>
         ${options.ai && job.ai_match_notes ? `<p class="small-text">${escapeHtml(job.ai_match_notes)}</p>` : ""}
         ${compact ? "" : `<p class="small-text">${escapeHtml(notes || "")}</p>`}
@@ -1128,7 +1156,9 @@ function jobCard(job, compact = false, options = {}) {
 }
 
 function compactJobTags(job, limit = 5) {
+  const deadline = deadlineInfo(job);
   const tags = [
+    deadline.label,
     employmentTypeLabel(job.employment_type || "Unknown"),
     ...(job.pathway_tags || []),
     ...(job.user_tag_matches || []).map((item) => item.label || item.id),
@@ -1139,7 +1169,7 @@ function compactJobTags(job, limit = 5) {
   return `
     ${unique.map((tag) => {
       const text = String(tag);
-      const cls = text.includes("风险") || text.includes("偏低") || text.includes("无转正") || text.includes("待确认") || text.includes("未知")
+      const cls = text.includes("风险") || text.includes("偏低") || text.includes("无转正") || text.includes("待确认") || text.includes("未知") || text.includes("截止")
         ? "warn"
         : (text.includes("工签") || text.includes("转正") || text.includes("中文") ? "pathway-badge" : "quiet-badge");
       return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
@@ -1710,10 +1740,7 @@ function renderJobs() {
 
   const queue = state.jobs
     .filter((job) => job.status === "Apply Queue")
-    .sort((a, b) =>
-      dateToTime(b.updated_at || b.batch_date || b.found_date) - dateToTime(a.updated_at || a.batch_date || a.found_date)
-      || displayJobScore(b) - displayJobScore(a)
-    );
+    .sort(compareQueueUrgency);
   const today = state.summary.date || new Date().toISOString().slice(0, 10);
   const todayApplied = state.jobs.filter((job) => job.status === "Applied" && job.applied_date === today);
   const queueList = document.getElementById("queueList");
@@ -1797,7 +1824,13 @@ function filterTrackerJobs() {
 }
 
 function trackerNextStep(job) {
-  if (job.status === "Apply Queue") return "打开填表助手，完成后确认已投。";
+  if (job.status === "Apply Queue") {
+    const deadline = deadlineInfo(job);
+    if (deadline.code === "expired") return "截止日期已过，请先确认岗位是否仍开放。";
+    if (deadline.code === "today") return "今天截止，优先完成投递。";
+    if (["urgent", "soon"].includes(deadline.code)) return `${deadline.label}，建议优先投递。`;
+    return "打开填表助手，完成后确认已投。";
+  }
   if (job.status === "Follow Up") return "今天安排一次轻量跟进。";
   if (job.status === "Applied") {
     const elapsed = daysSince(job.applied_date);

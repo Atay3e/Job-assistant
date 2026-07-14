@@ -330,6 +330,43 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(server.has_keyword("ai_research", "ai"))
         self.assertTrue(server.has_keyword("研究 ai 产品", "ai"))
 
+    def test_application_deadline_parser_accepts_explicit_dates_only(self):
+        self.assertEqual(
+            server.extract_application_deadline("Applications close 31 July 2026"),
+            "2026-07-31",
+        )
+        self.assertEqual(
+            server.extract_application_deadline("Closing date: 07 Aug 2026"),
+            "2026-08-07",
+        )
+        self.assertEqual(
+            server.extract_application_deadline("Apply by 2026-09-18"),
+            "2026-09-18",
+        )
+        self.assertEqual(server.extract_application_deadline("Able to meet tight deadlines."), "")
+        self.assertEqual(server.extract_application_deadline("Application deadline: September 18, 2359"), "")
+
+    def test_application_deadline_status_is_actionable(self):
+        reference = server.dt.date(2026, 7, 14)
+
+        self.assertEqual(server.application_deadline_status("2026-07-14", reference)["code"], "today")
+        self.assertEqual(server.application_deadline_status("2026-07-16", reference)["code"], "urgent")
+        self.assertEqual(server.application_deadline_status("2026-07-20", reference)["code"], "soon")
+        self.assertEqual(server.application_deadline_status("2026-07-13", reference)["code"], "expired")
+        self.assertEqual(server.application_deadline_status("", reference)["code"], "unknown")
+
+    def test_queue_sort_puts_live_urgent_deadlines_first_and_expired_last(self):
+        reference = server.dt.date(2026, 7, 14)
+        jobs = [
+            {"id": 1, "application_deadline": "", "rank_score": 4.9, "updated_at": "2026-07-14T12:00:00"},
+            {"id": 2, "application_deadline": "2026-07-16", "rank_score": 3.5, "updated_at": "2026-07-10T12:00:00"},
+            {"id": 3, "application_deadline": "2026-07-13", "rank_score": 5.0, "updated_at": "2026-07-14T13:00:00"},
+        ]
+
+        ordered = sorted(jobs, key=lambda job: server.queue_job_sort_key(job, reference))
+
+        self.assertEqual([job["id"] for job in ordered], [2, 1, 3])
+
     def test_parse_linkedin_fixture(self):
         jobs = server.parse_linkedin_jobs_from_html(self.fixture("linkedin.html"), "product design intern", 5)
         self.assertEqual(jobs[0]["external_job_id"], "4411111111")
@@ -1769,6 +1806,99 @@ class DailyRunTests(TempAppMixin, unittest.TestCase):
 
 
 class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
+    def test_actionable_deadline_precedes_higher_scored_job(self):
+        deadline = (server.dt.date.today() + server.dt.timedelta(days=3)).strftime(server.DATE_FMT)
+        urgent = {
+            "id": 1,
+            "company": "Urgent Co",
+            "position": "Product Intern",
+            "source": "ATS",
+            "status": "Recommended",
+            "application_deadline": deadline,
+            "rank_score": 3.4,
+            "score": 3.2,
+        }
+        stronger = {
+            "id": 2,
+            "company": "Strong Co",
+            "position": "Product Intern",
+            "source": "ATS",
+            "status": "Recommended",
+            "application_deadline": "",
+            "rank_score": 5.0,
+            "score": 5.0,
+        }
+
+        payload = server.recommendation_payload_from_ranked_jobs(
+            [stronger, urgent], "SG", 2, {}, [], "default", []
+        )
+
+        self.assertEqual([job["id"] for job in payload["jobs"]], [1, 2])
+
+    def test_deadline_does_not_override_direction_alignment(self):
+        deadline = (server.dt.date.today() + server.dt.timedelta(days=1)).strftime(server.DATE_FMT)
+        mismatched = {
+            "id": 1,
+            "company": "Urgent HR Co",
+            "position": "HR Intern",
+            "source": "ATS",
+            "status": "Recommended",
+            "application_deadline": deadline,
+            "direction_mismatch_adjustment": -0.55,
+            "rank_score": 4.2,
+            "score": 3.5,
+        }
+        aligned = {
+            "id": 2,
+            "company": "Product Co",
+            "position": "Product Intern",
+            "source": "ATS",
+            "status": "Recommended",
+            "direction_mismatch_adjustment": 0,
+            "rank_score": 4.0,
+            "score": 3.5,
+        }
+
+        payload = server.recommendation_payload_from_ranked_jobs(
+            [mismatched, aligned], "SG", 2, {}, [], "default", []
+        )
+
+        self.assertEqual([job["id"] for job in payload["jobs"]], [2, 1])
+
+    def test_workbench_prioritizes_queued_job_with_near_deadline(self):
+        deadline = server.dt.date.today() + server.dt.timedelta(days=2)
+        urgent = server.upsert_job(
+            {
+                "company": "Deadline First Co",
+                "position": "Product Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/deadline-first",
+                "jd_text": f"Singapore product internship. Applications close {deadline.strftime('%d %B %Y')}.",
+            }
+        )
+        newer = server.upsert_job(
+            {
+                "company": "Recently Queued Co",
+                "position": "UX Intern",
+                "source": "Company Site / ATS",
+                "url": "https://example.com/recently-queued",
+                "jd_text": "Singapore UX internship with no published closing date.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set status='Apply Queue', updated_at=? where id=?",
+                ((server.dt.datetime.now() - server.dt.timedelta(days=2)).replace(microsecond=0).isoformat(), urgent["id"]),
+            )
+            conn.execute("update jobs set status='Apply Queue', updated_at=? where id=?", (server.now_iso(), newer["id"]))
+
+        payload = server.workbench_payload({"region": ["SG"]})
+
+        self.assertEqual(payload["queue_preview"][0]["id"], urgent["id"])
+        self.assertEqual(payload["queue_preview"][0]["application_deadline"], deadline.strftime(server.DATE_FMT))
+        self.assertEqual(payload["queue_preview"][0]["deadline_status"], "urgent")
+        self.assertIn("优先投递", payload["queue_preview"][0]["next_step"])
+
     def test_supplemental_recommendations_put_direction_mismatches_after_aligned_jobs(self):
         current_date = server.today()
         older_date = (server.dt.date.today() - server.dt.timedelta(days=3)).strftime(server.DATE_FMT)
