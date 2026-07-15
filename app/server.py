@@ -1325,7 +1325,7 @@ SOURCE_LIMITS = {
     "Internship.sg": 24,
     "Cultjobs": 18,
     "Startup Channels": 18,
-    "AI Startup ATS": 52,
+    "AI Startup ATS": 60,
     "LinkedIn AI": 18,
     "InternSG AI": 12,
     "Indeed AI": 8,
@@ -1354,6 +1354,10 @@ SG_AI_STARTUP_ATS_BOARDS = [
     ("Razer", "https://razer.wd3.myworkdayjobs.com/Careers", "AI, gaming, community, product and operations internships"),
     ("Circles", "https://circles.wd103.myworkdayjobs.com/en-US/Circles", "AI product, digital telco, growth and strategy early-career roles"),
     ("Wise", "https://careers.smartrecruiters.com/Wise", "Fintech analytics, product, operations and marketing internships"),
+    ("Bosch Singapore", "https://careers.smartrecruiters.com/BoschGroup", "AI, connected services, product and digital transformation internships"),
+    ("We. Singapore", "https://job-boards.greenhouse.io/wesingapore", "Innovation, AI-enabled content, design and communications internships"),
+    ("Carta", "https://job-boards.greenhouse.io/carta", "Fintech, startup strategy, product and operations internships"),
+    ("Marshall Wace", "https://job-boards.greenhouse.io/mwinternshipprogram", "Technology, AI and product internships with graduate conversion paths"),
 ]
 
 EMPLOYMENT_PRIORITY_VALUES = {"internship", "full_time", "both", "unspecified"}
@@ -6233,19 +6237,20 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                 )
         elif smartrecruiters:
             offset = 0
+            country_code = {"SG": "sg", "HK": "hk", "CN": "cn"}.get(region)
+            listing_items: list[dict] = []
             for _page in range(5):
+                query = {"limit": 100, "offset": offset}
+                if country_code:
+                    query["country"] = country_code
                 payload = json.loads(http_get(
-                    f"https://api.smartrecruiters.com/v1/companies/{smartrecruiters}/postings?limit=100&offset={offset}",
+                    f"https://api.smartrecruiters.com/v1/companies/{smartrecruiters}/postings?{urlencode(query)}",
                     timeout=COMPANY_SCAN_TIMEOUT,
                     retries=0,
                 ))
                 postings = payload.get("content") or []
                 for item in postings:
                     location = item.get("location") if isinstance(item.get("location"), dict) else {}
-                    employment = item.get("typeOfEmployment") if isinstance(item.get("typeOfEmployment"), dict) else {}
-                    experience = item.get("experienceLevel") if isinstance(item.get("experienceLevel"), dict) else {}
-                    department = item.get("department") if isinstance(item.get("department"), dict) else {}
-                    function = item.get("function") if isinstance(item.get("function"), dict) else {}
                     location_text = re.sub(
                         r",\s*,",
                         ",",
@@ -6253,38 +6258,79 @@ def fetch_company_ats_jobs(url: str, company: str, focus: str, region: str, city
                     )
                     if not explicit_ats_location_matches_region(location_text, region, city):
                         continue
-                    metadata = "\n".join(
-                        value for value in [
-                            f"Employment: {clean_text(employment.get('label') or '')}" if employment.get("label") else "",
-                            f"Experience: {clean_text(experience.get('label') or '')}" if experience.get("label") else "",
-                            f"Department: {clean_text(department.get('label') or '')}" if department.get("label") else "",
-                            f"Function: {clean_text(function.get('label') or '')}" if function.get("label") else "",
-                        ]
-                        if value
-                    )
-                    append_company_job(
-                        jobs,
-                        seen,
-                        company_job_record(
-                            company,
-                            item.get("name") or "",
-                            smartrecruiters_public_job_url(item, smartrecruiters) or url,
-                            region,
-                            city,
-                            focus,
-                            url,
-                            metadata or item.get("name") or "",
-                            "Company Site / ATS",
-                            location_text,
-                        ),
-                        limit,
-                    )
-                    if len(jobs) >= limit:
+                    listing_items.append(item)
+                    if len(listing_items) >= limit:
                         break
                 total = int(payload.get("totalFound") or len(postings))
                 offset += int(payload.get("limit") or 100)
-                if len(jobs) >= limit or not postings or offset >= total:
+                if len(listing_items) >= limit or not postings or offset >= total:
                     break
+
+            def fetch_smartrecruiters_detail(item: dict) -> tuple[dict, dict]:
+                posting_id = clean_text(item.get("id") or "")
+                official_detail_url = (
+                    f"https://api.smartrecruiters.com/v1/companies/{smartrecruiters}/postings/{posting_id}"
+                    if posting_id else ""
+                )
+                detail_url = clean_text(item.get("ref") or "")
+                if urlparse(detail_url).netloc.lower() != "api.smartrecruiters.com":
+                    detail_url = official_detail_url
+                if not detail_url:
+                    return item, {}
+                try:
+                    detail = json.loads(http_get(detail_url, timeout=COMPANY_SCAN_TIMEOUT, retries=0))
+                except Exception:
+                    detail = {}
+                return item, detail if isinstance(detail, dict) else {}
+
+            with ThreadPoolExecutor(max_workers=min(6, len(listing_items) or 1)) as detail_executor:
+                detail_rows = list(detail_executor.map(fetch_smartrecruiters_detail, listing_items))
+            for item, detail in detail_rows:
+                location = item.get("location") if isinstance(item.get("location"), dict) else {}
+                employment = item.get("typeOfEmployment") if isinstance(item.get("typeOfEmployment"), dict) else {}
+                experience = item.get("experienceLevel") if isinstance(item.get("experienceLevel"), dict) else {}
+                department = item.get("department") if isinstance(item.get("department"), dict) else {}
+                function = item.get("function") if isinstance(item.get("function"), dict) else {}
+                location_text = re.sub(
+                    r",\s*,",
+                    ",",
+                    clean_text(location.get("fullLocation") or location.get("city") or ""),
+                )
+                metadata = "\n".join(
+                    value for value in [
+                        f"Employment: {clean_text(employment.get('label') or '')}" if employment.get("label") else "",
+                        f"Experience: {clean_text(experience.get('label') or '')}" if experience.get("label") else "",
+                        f"Department: {clean_text(department.get('label') or '')}" if department.get("label") else "",
+                        f"Function: {clean_text(function.get('label') or '')}" if function.get("label") else "",
+                    ]
+                    if value
+                )
+                job_ad = detail.get("jobAd") if isinstance(detail.get("jobAd"), dict) else {}
+                sections = job_ad.get("sections") if isinstance(job_ad.get("sections"), dict) else {}
+                section_text = "\n".join(
+                    clean_text(section.get("text") or "")
+                    for key in ["companyDescription", "jobDescription", "qualifications", "additionalInformation"]
+                    for section in [sections.get(key)]
+                    if isinstance(section, dict) and clean_text(section.get("text") or "")
+                )
+                posting_item = {**item, **{key: detail.get(key) for key in ["postingUrl", "applyUrl"] if detail.get(key)}}
+                append_company_job(
+                    jobs,
+                    seen,
+                    company_job_record(
+                        company,
+                        item.get("name") or "",
+                        smartrecruiters_public_job_url(posting_item, smartrecruiters) or url,
+                        region,
+                        city,
+                        focus,
+                        url,
+                        "\n".join(value for value in [metadata, section_text] if value) or item.get("name") or "",
+                        "Company Site / ATS",
+                        location_text,
+                    ),
+                    limit,
+                )
         elif workable:
             payload = json.loads(http_get(f"https://apply.workable.com/api/v1/widget/accounts/{workable}?details=true", timeout=COMPANY_SCAN_TIMEOUT, retries=0))
             for item in payload.get("jobs") or []:
@@ -8696,6 +8742,9 @@ def upsert_job(payload: dict) -> dict:
                     score=?,
                     eligibility_flags=?,
                     match_notes=?,
+                    status=case when status='New' and ? then 'Recommended' else status end,
+                    batch_date=case when status='New' and ? then coalesce(batch_date, ?) else batch_date end,
+                    recommended_date=case when status='New' and ? then coalesce(recommended_date, ?) else recommended_date end,
                     last_checked_at=?,
                     updated_at=?,
                     resume_path=coalesce(?, resume_path),
@@ -8732,6 +8781,11 @@ def upsert_job(payload: dict) -> dict:
                     score,
                     json.dumps(flags),
                     match_notes,
+                    initial_status == "Recommended",
+                    initial_status == "Recommended",
+                    today(),
+                    initial_status == "Recommended",
+                    today(),
                     stamp,
                     stamp,
                     resume_path,
@@ -10333,7 +10387,15 @@ def workbench_actions(
 def is_watched_company_job(job: dict, watched_terms: set[str]) -> bool:
     company_text = f"{job.get('company') or ''} {job.get('name') or ''}"
     from_watched_source = clean_text(job.get("source") or "").lower() == "关注公司公开来源"
-    return from_watched_source or (
+    has_watched_alternate_source = any(
+        clean_text(item.get("source") or "").lower() == "关注公司公开来源"
+        for item in (job.get("alternate_links") or [])
+        if isinstance(item, dict)
+    ) or any(
+        clean_text(source).lower() == "关注公司公开来源"
+        for source in (job.get("alternate_sources") or [])
+    )
+    return from_watched_source or has_watched_alternate_source or (
         bool(watched_terms)
         and any(company_text_has_term(company_text, term) for term in watched_terms)
     )

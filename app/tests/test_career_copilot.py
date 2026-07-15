@@ -623,7 +623,7 @@ class ParserTests(unittest.TestCase):
     def test_ai_startup_ats_source_is_registered_as_primary(self):
         self.assertIn("新加坡科技与 AI ATS", server.expected_scan_sources("SG"))
         self.assertEqual(server.scan_source_mode("新加坡科技与 AI ATS"), "primary")
-        self.assertEqual(server.SOURCE_LIMITS["AI Startup ATS"], 52)
+        self.assertEqual(server.SOURCE_LIMITS["AI Startup ATS"], 60)
 
     def test_sg_tech_ats_includes_verified_product_and_startup_boards(self):
         boards = {company: url for company, url, _focus in server.SG_AI_STARTUP_ATS_BOARDS}
@@ -639,6 +639,10 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(boards["Razer"], "https://razer.wd3.myworkdayjobs.com/Careers")
         self.assertEqual(boards["Circles"], "https://circles.wd103.myworkdayjobs.com/en-US/Circles")
         self.assertEqual(boards["Wise"], "https://careers.smartrecruiters.com/Wise")
+        self.assertEqual(boards["Bosch Singapore"], "https://careers.smartrecruiters.com/BoschGroup")
+        self.assertEqual(boards["We. Singapore"], "https://job-boards.greenhouse.io/wesingapore")
+        self.assertEqual(boards["Carta"], "https://job-boards.greenhouse.io/carta")
+        self.assertEqual(boards["Marshall Wace"], "https://job-boards.greenhouse.io/mwinternshipprogram")
 
     def test_sg_tech_ats_scans_beyond_first_eight_roles_before_filtering(self):
         requested_limits = []
@@ -1691,7 +1695,123 @@ class ParserTests(unittest.TestCase):
 
         self.assertFalse(failures)
         self.assertEqual([job["position"] for job in jobs], ["Analytics Intern"])
+        listing_urls = [call.args[0] for call in fetch.call_args_list if "/postings?" in call.args[0]]
+        self.assertEqual(len(listing_urls), 2)
+
+    def test_smartrecruiters_filters_global_boards_to_the_target_country(self):
+        singapore_page = {
+            "offset": 0,
+            "limit": 100,
+            "totalFound": 1,
+            "content": [
+                {
+                    "id": "sg-ai-intern",
+                    "name": "Intern, Generative AI Chatbot Development",
+                    "company": {"identifier": "BoschGroup"},
+                    "location": {"fullLocation": "Singapore, Singapore"},
+                    "typeOfEmployment": {"label": "Intern"},
+                }
+            ],
+        }
+
+        with mock.patch.object(server, "http_get", return_value=json.dumps(singapore_page)) as fetch:
+            jobs, failures = server.fetch_company_ats_jobs(
+                "https://careers.smartrecruiters.com/BoschGroup",
+                "Bosch Singapore",
+                "AI and product internships",
+                "SG",
+                "Singapore",
+                10,
+            )
+
+        self.assertFalse(failures)
+        self.assertEqual([job["position"] for job in jobs], ["Intern, Generative AI Chatbot Development"])
+        listing_urls = [call.args[0] for call in fetch.call_args_list if "/postings?" in call.args[0]]
+        self.assertEqual(len(listing_urls), 1)
+        self.assertIn("country=sg", listing_urls[0])
+
+    def test_smartrecruiters_fetches_official_job_ad_sections_for_scoring(self):
+        detail_url = "https://api.smartrecruiters.com/v1/companies/BoschGroup/postings/sg-ai-intern"
+        listing = {
+            "offset": 0,
+            "limit": 100,
+            "totalFound": 1,
+            "content": [
+                {
+                    "id": "sg-ai-intern",
+                    "name": "AI Product Research Intern",
+                    "ref": detail_url,
+                    "company": {"identifier": "BoschGroup"},
+                    "location": {"fullLocation": "Singapore, Singapore"},
+                    "typeOfEmployment": {"label": "Intern"},
+                }
+            ],
+        }
+        detail = {
+            "jobAd": {
+                "sections": {
+                    "jobDescription": {"text": "Research users and prototype an AI product in Figma."},
+                    "qualifications": {"text": "Strong UX research and service design skills."},
+                    "additionalInformation": {"text": "High performers may convert to a full-time role."},
+                }
+            }
+        }
+
+        def smartrecruiters_fixture(url, **_kwargs):
+            return json.dumps(detail if url == detail_url else listing)
+
+        with mock.patch.object(server, "http_get", side_effect=smartrecruiters_fixture) as fetch:
+            jobs, failures = server.fetch_company_ats_jobs(
+                "https://careers.smartrecruiters.com/BoschGroup",
+                "Bosch Singapore",
+                "AI and product internships",
+                "SG",
+                "Singapore",
+                10,
+            )
+
+        self.assertFalse(failures)
         self.assertEqual(fetch.call_count, 2)
+        self.assertIn("Research users and prototype an AI product in Figma", jobs[0]["jd_text"])
+        self.assertIn("High performers may convert to a full-time role", jobs[0]["jd_text"])
+
+    def test_smartrecruiters_does_not_follow_untrusted_detail_refs(self):
+        listing = {
+            "offset": 0,
+            "limit": 100,
+            "totalFound": 1,
+            "content": [
+                {
+                    "id": "sg-ai-intern",
+                    "name": "AI Product Intern",
+                    "ref": "https://attacker.example/private",
+                    "location": {"fullLocation": "Singapore, Singapore"},
+                }
+            ],
+        }
+        requested_urls = []
+
+        def smartrecruiters_fixture(url, **_kwargs):
+            requested_urls.append(url)
+            return json.dumps(listing if "/postings?" in url else {})
+
+        with mock.patch.object(server, "http_get", side_effect=smartrecruiters_fixture):
+            jobs, failures = server.fetch_company_ats_jobs(
+                "https://careers.smartrecruiters.com/BoschGroup",
+                "Bosch Singapore",
+                "AI and product internships",
+                "SG",
+                "Singapore",
+                10,
+            )
+
+        self.assertFalse(failures)
+        self.assertEqual(len(jobs), 1)
+        self.assertNotIn("https://attacker.example/private", requested_urls)
+        self.assertIn(
+            "https://api.smartrecruiters.com/v1/companies/BoschGroup/postings/sg-ai-intern",
+            requested_urls,
+        )
 
     def test_lever_and_ashby_require_explicit_target_region(self):
         lever_payload = [
@@ -3725,6 +3845,27 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
 
         self.assertEqual([job["id"] for job in selected], [1])
 
+    def test_supplemental_candidates_exclude_merged_watched_company_sources(self):
+        merged_job = {
+            "id": 1,
+            "company": "Independent Product Lab",
+            "position": "Product Intern",
+            "source": "LinkedIn",
+            "alternate_links": [
+                {
+                    "id": 2,
+                    "source": "关注公司公开来源",
+                    "url": "https://example.com/watched-company-role",
+                }
+            ],
+        }
+
+        self.assertTrue(server.is_watched_company_job(merged_job, set()))
+        self.assertEqual(
+            server.diversified_workbench_recommendations([merged_job], set(), limit=20),
+            [],
+        )
+
     def test_company_catalog_marks_current_city_match(self):
         server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
         catalog = server.company_catalog("CN", "Shanghai")
@@ -4254,6 +4395,44 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(source_run["new_count"], 1)
         self.assertEqual(source_run["updated_count"], 1)
         self.assertEqual(source_run["duplicate_count"], 1)
+
+    def test_rescan_promotes_new_jobs_without_overwriting_user_decisions(self):
+        url = "https://example.com/rescored-role"
+        job = server.upsert_job(
+            {
+                "company": "Rescore Co",
+                "position": "Operations Assistant",
+                "source": "Company Site / ATS",
+                "url": url,
+                "jd_text": "Singapore administrative role.",
+            }
+        )
+        self.assertEqual(job["status"], "New")
+
+        promoted = server.upsert_job(
+            {
+                "company": "Rescore Co",
+                "position": "AI Product Design Intern",
+                "source": "Company Site / ATS",
+                "url": url,
+                "jd_text": "Singapore AI product design internship with UX research, service design and Figma prototyping.",
+            }
+        )
+        self.assertEqual(promoted["status"], "Recommended")
+        self.assertEqual(promoted["recommended_date"], server.today())
+
+        with server.get_db() as conn:
+            conn.execute("update jobs set status='Apply Queue' where id=?", (promoted["id"],))
+        rescanned = server.upsert_job(
+            {
+                "company": "Rescore Co",
+                "position": "AI Product Design Intern",
+                "source": "Company Site / ATS",
+                "url": url,
+                "jd_text": "Singapore AI product design internship with UX research, service design and Figma prototyping.",
+            }
+        )
+        self.assertEqual(rescanned["status"], "Apply Queue")
 
     def test_async_scan_returns_running_run_and_finishes(self):
         def fake_scan_sources(triggered_by="manual", forced=True, scan_run_id=None, region=None):

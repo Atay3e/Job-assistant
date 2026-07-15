@@ -359,11 +359,16 @@ function scoreTone(score) {
 }
 
 function isRecommendationCandidate(job) {
+  const hasWatchedAlternateSource = [
+    ...(job.alternate_links || []).map((link) => link?.source),
+    ...(job.alternate_sources || []),
+  ].some((source) => String(source || "").trim() === "关注公司公开来源");
   return job.supplemental_candidate !== false
     && !RECOMMENDATION_EXCLUDED_STATUSES.has(job.status)
     && !job.company_hidden_by_watchlist
     && !job.company_watched_by_user
     && String(job.source || "").trim() !== "关注公司公开来源"
+    && !hasWatchedAlternateSource
     && !isLocallyWatchedCompanyJob(job);
 }
 
