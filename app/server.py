@@ -1810,7 +1810,9 @@ NON_TARGET_FUNCTION_TITLE_PATTERN = re.compile(
     r"devops|site reliability|sre|cloud engineer|platform engineer|security engineer|"
     r"cybersecurity|quantitative|robotics engineer|robot learning|ai\s*/\s*data|data intern|"
     r"autonomous vehicle|integration\s*(?:&|and)\s*validation|software tools|"
-    r"engineering intern(?:ship)?|repair|maintenance)\b",
+    r"engineering intern(?:ship)?|mechanical(?: design| engineer(?:ing)?| engineering)?|"
+    r"manufacturing engineer(?:ing)?|process development|healthcare (?:business support|operations)|"
+    r"clinical operations|medical assistant|repair|maintenance)\b",
     flags=re.I,
 )
 
@@ -9262,6 +9264,8 @@ def direction_match_for_job(job: dict, direction: dict, matching_text: str | Non
     title_hits = [keyword for keyword in hits if has_keyword(title_text, keyword)]
     generic_keywords = DIRECTION_GENERIC_KEYWORDS.get(direction["id"], set())
     specific_hits = [keyword for keyword in hits if keyword not in generic_keywords]
+    if direction["id"] == "service-design" and not specific_hits:
+        return 0.0, []
     if (
         direction["id"] == "ai-product"
         and PURE_TECHNICAL_TITLE_PATTERN.search(title_text)
@@ -10053,9 +10057,9 @@ def recommendation_payload_from_ranked_jobs(
             not bool(item.get("direction_mismatch_adjustment")),
             deadline_recommendation_priority(item),
             item.get("batch_date") == current_date or item.get("recommended_date") == current_date,
+            float(item.get("rank_score") or 0),
             float(item.get("user_tag_priority") or 0) if has_tag_preferences else 0,
             float(item.get("user_tag_adjustment") or 0) if has_tag_preferences else 0,
-            float(item.get("rank_score") or 0),
             float(item.get("base_score") or 0),
             item.get("updated_at") or "",
         ),

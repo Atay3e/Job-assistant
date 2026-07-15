@@ -1393,6 +1393,61 @@ class ParserTests(unittest.TestCase):
         self.assertIn("ai_related", server.content_tag_ids_for_job(ai_job))
         self.assertIn("ux_related", server.content_tag_ids_for_job(ux_job))
 
+    def test_service_design_requires_method_evidence_beyond_a_healthcare_domain(self):
+        healthcare_operations = {
+            "company": "Healthcare Staffing Co",
+            "position": "Healthcare Business Support Intern | Healthcare Operations Intern",
+            "source": "Internship.sg",
+            "jd_text": "Support clinic schedules, process invoices, update spreadsheets, and coordinate daily operations.",
+        }
+
+        score, hits = server.direction_match_for_job(
+            healthcare_operations,
+            server.career_direction_by_id("service-design"),
+        )
+
+        self.assertEqual(score, 0)
+        self.assertEqual(hits, [])
+        self.assertNotIn("ux_related", server.content_tag_ids_for_job(healthcare_operations))
+
+    def test_product_profile_downweights_mechanical_and_healthcare_operations_roles(self):
+        jobs = [
+            {
+                "company": "Industrial Engineering Co",
+                "position": "Mechanical Design and Process Development Intern",
+                "jd_text": "Create CAD drawings, validate mechanical parts, and improve manufacturing processes.",
+                "score": 4.2,
+            },
+            {
+                "company": "Healthcare Staffing Co",
+                "position": "Healthcare Business Support Intern | Healthcare Operations Intern",
+                "jd_text": "Support clinic schedules, invoices, spreadsheets, and daily healthcare operations.",
+                "score": 4.0,
+            },
+        ]
+
+        for job in jobs:
+            ranked = server.rank_job_with_preferences(
+                {
+                    **job,
+                    "source": "Company Site / ATS",
+                    "region": "SG",
+                    "location": "Singapore",
+                    "status": "Recommended",
+                    "employment_type": "Internship",
+                },
+                ["ai-product", "ux-product-design", "user-research", "service-design"],
+                {},
+                "SG",
+                set(),
+                server.default_region_context("SG"),
+            )
+
+            with self.subTest(position=job["position"]):
+                self.assertEqual(ranked["matched_directions"], [])
+                self.assertEqual(ranked["direction_mismatch_adjustment"], -0.55)
+                self.assertIn("方向偏离", ranked["recommendation_reason"])
+
     def test_ai_product_direction_rejects_pure_technical_and_presales_roles(self):
         ai_product = server.career_direction_by_id("ai-product")
         ux_product = server.career_direction_by_id("ux-product-design")
@@ -3392,6 +3447,59 @@ class RecommendationTests(TempAppMixin, unittest.TestCase):
         self.assertIn("官网 / ATS", [item["label"] for item in preferred_ranked["user_tag_matches"]])
         self.assertIn("JobStreet", [item["label"] for item in muted_ranked["user_tag_mutes"]])
         self.assertIn("少看标签", muted_ranked["recommendation_reason"])
+
+    def test_overall_rank_outweighs_small_differences_in_preferred_tag_counts(self):
+        common = {
+            "source": "LinkedIn",
+            "status": "Recommended",
+            "region": "SG",
+            "city": "Singapore",
+            "location": "Singapore",
+            "employment_type": "Internship",
+            "score": 4.0,
+            "base_score": 4.0,
+            "found_date": server.today(),
+            "recommended_date": server.today(),
+            "last_checked_at": server.now_iso(),
+            "updated_at": server.now_iso(),
+            "eligibility_flags": [],
+            "direction_mismatch_adjustment": 0.0,
+            "user_tag_mutes": [],
+        }
+        stronger_overall = {
+            **common,
+            "id": 1,
+            "company": "Strong Product Co",
+            "position": "Product Design Intern",
+            "url": "https://example.com/strong-overall",
+            "jd_text": "Singapore product design internship.",
+            "rank_score": 4.8,
+            "user_tag_priority": 0.12,
+            "user_tag_adjustment": 0.12,
+        }
+        more_lightweight_tags = {
+            **common,
+            "id": 2,
+            "company": "Tag Heavy Co",
+            "position": "Marketing Intern",
+            "url": "https://example.com/tag-heavy",
+            "jd_text": "Singapore marketing internship.",
+            "rank_score": 4.3,
+            "user_tag_priority": 0.5,
+            "user_tag_adjustment": 0.5,
+        }
+
+        payload = server.recommendation_payload_from_ranked_jobs(
+            [more_lightweight_tags, stronger_overall],
+            "SG",
+            20,
+            {"preferred_job_tags": ["source_linkedin"], "muted_job_tags": []},
+            ["ux-product-design"],
+            "user_context",
+            [],
+        )
+
+        self.assertEqual([job["id"] for job in payload["jobs"]], [1, 2])
 
     def test_lightweight_tags_cannot_overpower_a_muted_contract_role(self):
         preference = server.user_tag_preference_for_job(
