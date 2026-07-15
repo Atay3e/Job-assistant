@@ -1358,6 +1358,10 @@ SG_AI_STARTUP_ATS_BOARDS = [
     ("We. Singapore", "https://job-boards.greenhouse.io/wesingapore", "Innovation, AI-enabled content, design and communications internships"),
     ("Carta", "https://job-boards.greenhouse.io/carta", "Fintech, startup strategy, product and operations internships"),
     ("Marshall Wace", "https://job-boards.greenhouse.io/mwinternshipprogram", "Technology, AI and product internships with graduate conversion paths"),
+    ("PatSnap", "https://jobs.lever.co/patsnap", "AI product, UI/UX design, research and engineering internships"),
+    ("Workstream", "https://job-boards.greenhouse.io/workstream", "AI-enabled marketing, growth and internship-to-full-time opportunities"),
+    ("WPP Media", "https://job-boards.greenhouse.io/wppmedia", "AI-driven media, data, growth and marketing internships"),
+    ("Ninja Van", "https://jobs.lever.co/ninjavan", "Logistics technology, product, operations and graduate opportunities"),
 ]
 
 EMPLOYMENT_PRIORITY_VALUES = {"internship", "full_time", "both", "unspecified"}
@@ -8939,11 +8943,25 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
     query += f" order by score desc, updated_at desc limit {5000 if user_state_filter or date_filter else 500}"
     with get_db() as conn:
         rows = conn.execute(query, values).fetchall()
+        today_rows = []
         pathway_rows = []
         deadline_rows = []
         state_rows = []
         if region_filter and not status and not date_filter:
             code = active_region_code(region_filter)
+            today_clauses = [
+                "region=?",
+                "status in ('New', 'Recommended')",
+                "(found_date=? or batch_date=? or recommended_date=?)",
+            ]
+            today_values: list[str] = [code, today(), today(), today()]
+            if city_filter and code == "CN":
+                today_clauses.append("(city = ? or location like ? or coalesce(city, '') = '')")
+                today_values.extend([city_filter, f"%{city_filter}%"])
+            today_rows = conn.execute(
+                f"select * from jobs where {' and '.join(today_clauses)} order by score desc, updated_at desc limit 1000",
+                today_values,
+            ).fetchall()
             deadline_rows = conn.execute(
                 """
                 select * from jobs
@@ -8981,6 +8999,10 @@ def list_jobs(params: dict[str, list[str]]) -> list[dict]:
     jobs = [row_to_dict(row) for row in rows]
     seen_ids = {job.get("id") for job in jobs}
     for job in (row_to_dict(row) for row in state_rows):
+        if job.get("id") not in seen_ids:
+            jobs.append(job)
+            seen_ids.add(job.get("id"))
+    for job in (row_to_dict(row) for row in today_rows):
         if job.get("id") not in seen_ids:
             jobs.append(job)
             seen_ids.add(job.get("id"))

@@ -643,6 +643,10 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(boards["We. Singapore"], "https://job-boards.greenhouse.io/wesingapore")
         self.assertEqual(boards["Carta"], "https://job-boards.greenhouse.io/carta")
         self.assertEqual(boards["Marshall Wace"], "https://job-boards.greenhouse.io/mwinternshipprogram")
+        self.assertEqual(boards["PatSnap"], "https://jobs.lever.co/patsnap")
+        self.assertEqual(boards["Workstream"], "https://job-boards.greenhouse.io/workstream")
+        self.assertEqual(boards["WPP Media"], "https://job-boards.greenhouse.io/wppmedia")
+        self.assertEqual(boards["Ninja Van"], "https://jobs.lever.co/ninjavan")
 
     def test_sg_tech_ats_scans_beyond_first_eight_roles_before_filtering(self):
         requested_limits = []
@@ -2041,6 +2045,49 @@ class DailyRunTests(TempAppMixin, unittest.TestCase):
 
 
 class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
+    def test_workbench_keeps_today_discoveries_beyond_the_default_job_limit(self):
+        current_date = server.today()
+        older_date = (server.dt.date.today() - server.dt.timedelta(days=2)).strftime(server.DATE_FMT)
+        now = server.now_iso()
+        with server.get_db() as conn:
+            conn.executemany(
+                """
+                insert into jobs(
+                    company, position, name, source, url, location, employment_type,
+                    jd_text, jd_hash, score, status, found_date, batch_date,
+                    last_checked_at, created_at, updated_at, region, city, source_region
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        f"Older High Score Co {index}", "Product Intern", "Product Intern", "InternSG",
+                        f"https://example.com/older-high-score-{index}", "Singapore", "Internship",
+                        "Singapore product internship.", f"older-{index}", 5.0, "Recommended",
+                        older_date, older_date, now, now, now, "SG", "Singapore", "SG",
+                    )
+                    for index in range(500)
+                ],
+            )
+        fresh_job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Fresh Official Source Co",
+                "position": "Product Operations Intern",
+                "source": "ATS · 科技初创",
+                "url": "https://example.com/fresh-official-source",
+                "jd_text": "Singapore product operations internship discovered today.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set score=3.1, status='Recommended', found_date=?, batch_date=? where id=?",
+                (current_date, current_date, fresh_job["id"]),
+            )
+
+        payload = server.workbench_payload({"region": ["SG"]})
+
+        self.assertIn(fresh_job["id"], [job["id"] for job in payload["today_new_recommendations"]])
+
     def test_actionable_deadline_precedes_higher_scored_job(self):
         deadline = (server.dt.date.today() + server.dt.timedelta(days=3)).strftime(server.DATE_FMT)
         urgent = {
