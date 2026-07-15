@@ -980,6 +980,7 @@ function renderFocusPanel() {
       || (action === "ai_product" && (context.target_directions || []).includes("ai-product"))
     );
     button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   const directionOptions = state.profileOptions.direction_options || [];
   const directionLabels = (context.target_directions || []).slice(0, 4).map((id) => optionLabel(directionOptions, id) || id);
@@ -1334,6 +1335,9 @@ function renderWorkbench() {
   const staleApplicationCount = Number(wb.stale_application_count || 0);
   const todayApplied = wb.today_applied || [];
   const actions = wb.today_actions || [];
+  const visibleActions = actions
+    .filter((action) => !["scan", "scan_limited"].includes(action.kind))
+    .slice(0, 4);
   const context = activeRegionContext();
   const preferredCoreTags = (context.preferred_job_tags || []).filter((tag) => WORKBENCH_CORE_TAGS.has(tag));
   const mutedCoreTags = (context.muted_job_tags || []).filter((tag) => WORKBENCH_CORE_TAGS.has(tag));
@@ -1363,8 +1367,8 @@ function renderWorkbench() {
   const followupPreviewCount = document.getElementById("workbenchFollowupPreviewCount");
 
   if (actionList) {
-    actionList.innerHTML = actions.length
-      ? actions.map(actionItemTemplate).join("")
+    actionList.innerHTML = visibleActions.length
+      ? visibleActions.map(actionItemTemplate).join("")
       : `<div class="empty-state">今天没有必须处理的事项。可以看 Top 岗位或复盘追踪表。</div>`;
   }
 
