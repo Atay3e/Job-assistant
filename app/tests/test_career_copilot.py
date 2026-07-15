@@ -2196,8 +2196,16 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
         self.assertIn("jd_text", full_job)
         self.assertNotIn("jd_text", compact_job)
         self.assertNotIn("jd_cn_text", compact_job)
+        self.assertNotIn("score_breakdown", compact_job)
+        self.assertNotIn("fit_reasons", compact_job)
+        self.assertNotIn("pathway_questions", compact_job)
+        self.assertNotIn("pathway_evidence_json", compact_job)
+        self.assertNotIn("resume_path", compact_job)
+        self.assertNotIn("cover_letter_path", compact_job)
         self.assertEqual(compact_job["company"], "Compact Co")
         self.assertEqual(compact_job["fit_score"], full_job["fit_score"])
+        self.assertEqual(compact_job["url"], full_job["url"])
+        self.assertLessEqual(len(compact_job), 65)
 
     def test_low_score_user_state_jobs_survive_recommendation_pool_limit(self):
         stamp = server.now_iso()

@@ -9947,7 +9947,24 @@ def apply_preference_scores_to_jobs(jobs: list[dict], region: str | None = None)
     return ranked
 
 
-COMPACT_JOB_OMIT_FIELDS = {"jd_text", "jd_cn_text", "jd_hash"}
+COMPACT_JOB_FIELDS = {
+    "id", "company", "position", "source", "status", "url",
+    "location", "region", "city", "source_region",
+    "employment_type", "conversion_opportunity",
+    "salary_min", "salary_max", "salary_currency", "salary_period", "salary_fit", "salary_fit_label",
+    "conversion_signal", "visa_sponsorship_signal", "language_signal",
+    "found_date", "batch_date", "recommended_date", "updated_at", "last_checked_at", "applied_date",
+    "last_followup_at", "followup_count",
+    "score", "base_score", "fit_score", "rank_score", "pathway_score", "pathway_tags",
+    "user_tag_matches", "user_tag_mutes", "decision_summary", "recommendation_reason",
+    "source_count", "alternate_links", "alternate_sources", "dedupe_key",
+    "supplemental_candidate", "company_watched_by_user", "company_hidden_by_watchlist",
+    "listing_freshness_status", "listing_freshness_label",
+    "deadline_status", "deadline_label", "deadline_days_remaining",
+    "queue_priority", "queue_priority_label", "queue_reason",
+    "followup_priority", "followup_priority_label", "followup_reason", "next_step",
+    "ai_relevance", "ai_match_notes",
+}
 WORKBENCH_JOB_FIELDS = {
     "id", "company", "position", "source", "status",
     "employment_type", "found_date", "updated_at", "applied_date",
@@ -9969,7 +9986,7 @@ def request_uses_compact_jobs(params: dict[str, list[str]] | None) -> bool:
 
 
 def compact_job_payload(job: dict) -> dict:
-    out = {key: value for key, value in job.items() if key not in COMPACT_JOB_OMIT_FIELDS}
+    out = {key: value for key, value in job.items() if key in COMPACT_JOB_FIELDS}
     out.setdefault("dedupe_key", job_dedupe_key(job))
     return out
 
