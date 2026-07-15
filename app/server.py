@@ -9841,6 +9841,11 @@ def rank_job_with_preferences(
         out["queue_priority"] = queue["priority"]
         out["queue_priority_label"] = queue["label"]
         out["queue_reason"] = queue["reason"]
+    if out.get("status") in {"Applied", "Follow Up"}:
+        followup = followup_decision(out)
+        out["followup_priority"] = followup["priority"]
+        out["followup_priority_label"] = followup["label"]
+        out["followup_reason"] = followup["reason"]
     out["decision_summary"] = job_decision_summary(out)
     return out
 
@@ -9900,6 +9905,7 @@ WORKBENCH_JOB_FIELDS = {
     "listing_freshness_status", "listing_freshness_label",
     "application_deadline", "deadline_status", "deadline_label", "deadline_days_remaining",
     "queue_priority", "queue_priority_label", "queue_reason",
+    "followup_priority", "followup_priority_label", "followup_reason", "last_followup_at", "followup_count",
 }
 
 
@@ -10060,14 +10066,14 @@ def daily_status(region: str | None = None) -> dict:
     }
 
 
-def days_since_date(value: str | None) -> int | None:
+def days_since_date(value: str | None, reference_date: dt.date | None = None) -> int | None:
     if not value:
         return None
     try:
         parsed = dt.datetime.strptime(str(value)[:10], DATE_FMT).date()
     except ValueError:
         return None
-    return max(0, (dt.date.today() - parsed).days)
+    return max(0, ((reference_date or dt.date.today()) - parsed).days)
 
 
 def number_like(value, default=0) -> float:
@@ -10091,40 +10097,67 @@ def next_step_for_job(job: dict) -> str:
             return str(job["queue_reason"])
         return "今天可以打开填表助手，最终提交前人工确认。"
     if status == "Applied":
-        days = days_since_date(job.get("applied_date"))
-        action_bucket = application_action_bucket(job)
-        if action_bucket == "stale":
-            return f"已投 {days} 天仍无更新，建议最后确认一次后归档。"
-        if action_bucket == "followup":
-            return f"已投 {days} 天，可以准备一次轻量跟进。"
-        if job.get("last_followup_at"):
-            return f"已记录第 {int(job.get('followup_count') or 0)} 次跟进，等待反馈。"
-        return "已投递，先记录状态，等待反馈。"
+        return followup_decision(job)["reason"]
     if status == "Follow Up":
-        return "需要跟进，建议补充联系记录。"
+        return followup_decision(job)["reason"]
     if status == "Recommended":
         return "先看转正、工签和语言证据，再决定是否加入队列。"
     return "打开岗位详情确认下一步。"
 
 
-def application_action_bucket(job: dict) -> str:
+def followup_decision(job: dict, reference_date: dt.date | None = None) -> dict:
     status = job.get("status") or ""
     if status == "Follow Up":
-        return "followup"
+        return {
+            "priority": "followup",
+            "label": "今天跟进",
+            "reason": "已标记需要跟进，今天发送一条简短消息。",
+        }
     if status != "Applied":
-        return ""
-    days = days_since_date(job.get("applied_date"))
+        return {"priority": "", "label": "", "reason": ""}
+    days = days_since_date(job.get("applied_date"), reference_date)
     if days is None or days < 3:
-        return "waiting"
-    followup_days = days_since_date(job.get("last_followup_at"))
+        return {
+            "priority": "waiting",
+            "label": "等待反馈",
+            "reason": "刚完成投递，先给招聘方一点处理时间。",
+        }
+    followup_days = days_since_date(job.get("last_followup_at"), reference_date)
     followup_count = int(job.get("followup_count") or 0)
     if followup_days is not None:
         if followup_days < 7:
-            return "waiting"
-        return "followup" if followup_count < 2 else "stale"
+            return {
+                "priority": "waiting",
+                "label": "等待反馈",
+                "reason": f"等待反馈：第 {max(1, followup_count)} 次跟进已发送，{7 - followup_days} 天后再判断。",
+            }
+        if followup_count < 2:
+            return {
+                "priority": "followup",
+                "label": "今天跟进",
+                "reason": "上次跟进已过 7 天，可以发送第二次简短跟进。",
+            }
+        return {
+            "priority": "archive",
+            "label": "建议归档",
+            "reason": f"已跟进 {followup_count} 次仍无回复，建议最后确认后暂停。",
+        }
     if days <= 14:
-        return "followup"
-    return "stale"
+        return {
+            "priority": "followup",
+            "label": "今天跟进",
+            "reason": f"已投 {days} 天，今天适合发送第一次简短跟进。",
+        }
+    return {
+        "priority": "archive",
+        "label": "建议归档",
+        "reason": f"已投 {days} 天仍无更新，建议最后确认一次后归档。",
+    }
+
+
+def application_action_bucket(job: dict) -> str:
+    decision = followup_decision(job)
+    return "stale" if decision["priority"] == "archive" else decision["priority"]
 
 
 def scan_run_summary_text(run: dict | None) -> str:
@@ -10452,7 +10485,13 @@ def workbench_payload(params: dict[str, list[str]] | None = None) -> dict:
     }
     top_recommendations = today_new_recommendations or weekly_unqueued_recommendations
     queue_preview = sorted(queue_jobs, key=queue_job_sort_key)[:5]
-    followup_preview = sorted(followups, key=lambda job: job.get("applied_date") or job.get("updated_at") or "", reverse=True)[:5]
+    followup_preview = sorted(
+        followups,
+        key=lambda job: (
+            int(job.get("followup_count") or 0),
+            job.get("last_followup_at") or job.get("applied_date") or job.get("updated_at") or "",
+        ),
+    )[:5]
     recommendation_sections = [
         {
             "id": "today_new",

@@ -714,6 +714,10 @@ function daysSince(value) {
   return Math.max(0, Math.floor((today - day) / 86400000));
 }
 
+function followupPriority(job) {
+  return String(job.followup_priority || "");
+}
+
 function deadlineInfo(job) {
   const code = String(job.deadline_status || "unknown");
   const label = String(job.deadline_label || "");
@@ -1822,11 +1826,11 @@ function filterTrackerJobs() {
       } else if (state.trackerStatus === "Applied") {
         if (!(job.status === "Applied" && job.applied_date !== today)) return false;
       } else if (state.trackerStatus === "Follow Up") {
-        const elapsed = daysSince(job.applied_date);
-        const needsFollowUp = job.status === "Follow Up" || (job.status === "Applied" && elapsed >= 3 && elapsed <= 14);
-        if (!needsFollowUp) return false;
+        if (followupPriority(job) !== "followup") return false;
+      } else if (state.trackerStatus === "Waiting") {
+        if (followupPriority(job) !== "waiting") return false;
       } else if (state.trackerStatus === "Stale") {
-        if (!(job.status === "Applied" && daysSince(job.applied_date) > 14)) return false;
+        if (followupPriority(job) !== "archive") return false;
       } else if (state.trackerStatus === "Paused") {
         if (!["Dropped", "Closed"].includes(job.status)) return false;
       } else if (state.trackerStatus !== "all" && job.status !== state.trackerStatus) {
@@ -1841,6 +1845,9 @@ function filterTrackerJobs() {
     })
     .sort((a, b) => {
       if (a.status === "Apply Queue" && b.status === "Apply Queue") return compareQueueUrgency(a, b);
+      if (["Follow Up", "Stale"].includes(state.trackerStatus)) {
+        return timelineDate(a).localeCompare(timelineDate(b)) || displayJobScore(b) - displayJobScore(a);
+      }
       return (state.trackerStatus === "all" ? (actionPriority[b.status] || 0) - (actionPriority[a.status] || 0) : 0)
         || timelineDate(b).localeCompare(timelineDate(a))
         || displayJobScore(b) - displayJobScore(a);
@@ -1856,16 +1863,9 @@ function trackerNextStep(job) {
     if (job.queue_reason) return job.queue_reason;
     return "打开填表助手，完成后确认已投。";
   }
-  if (job.status === "Follow Up") return "今天安排一次轻量跟进。";
+  if (job.status === "Follow Up") return job.followup_reason || "今天安排一次轻量跟进。";
   if (job.status === "Applied") {
-    const elapsed = daysSince(job.applied_date);
-    const followupElapsed = daysSince(job.last_followup_at);
-    const followupCount = Number(job.followup_count || 0);
-    if (job.last_followup_at && followupElapsed < 7) return `已记录第 ${followupCount} 次跟进，等待反馈。`;
-    if (job.last_followup_at && followupElapsed >= 7 && followupCount >= 2) return `已跟进 ${followupCount} 次仍无回复，可暂停归档。`;
-    if (job.last_followup_at && followupElapsed >= 7) return "可以安排第二次跟进。";
-    if (elapsed > 14) return `已投 ${elapsed} 天，最后确认一次后可暂停。`;
-    return elapsed >= 3 ? `已投 ${elapsed} 天，可以跟进。` : "等待反馈，保留岗位记录。";
+    return job.followup_reason || "已投递，等待反馈。";
   }
   if (job.status === "Interview") return "准备面试并记录下一轮时间。";
   if (job.status === "Rejected") return "已结束，可保留用于复盘。";
@@ -1874,15 +1874,11 @@ function trackerNextStep(job) {
 }
 
 function trackerActionButtons(job) {
-  const elapsed = daysSince(job.applied_date);
-  const followupElapsed = daysSince(job.last_followup_at);
-  const followupCount = Number(job.followup_count || 0);
   const queueButtons = job.status === "Apply Queue"
     ? `<button class="primary-button compact-button" data-action="assist" data-id="${job.id}" title="打开浏览器并填常见字段，最终提交前停住">${icon.assist} 填表</button><button class="secondary-button compact-button" data-action="confirm" data-id="${job.id}" title="仅在你已经完成外部申请后记录">${icon.submit} 确认已投</button>`
     : "";
-  const followupDue = job.status === "Follow Up"
-    || (job.status === "Applied" && (followupElapsed >= 7 ? followupCount < 2 : !job.last_followup_at && elapsed >= 3 && elapsed <= 14));
-  const stale = job.status === "Applied" && ((job.last_followup_at && followupElapsed >= 7 && followupCount >= 2) || (!job.last_followup_at && elapsed > 14));
+  const followupDue = followupPriority(job) === "followup";
+  const stale = followupPriority(job) === "archive";
   const followupButton = followupDue || stale
     ? `<button class="secondary-button compact-button" data-action="followup-draft" data-id="${job.id}" title="生成可复制的跟进邮件，不会自动发送">${stale ? "最后跟进" : "写跟进"}</button>`
     : "";
@@ -1902,6 +1898,8 @@ function renderTrackerControls(filteredCount, startIndex, endIndex, totalPages) 
   document.querySelectorAll(".tracker-status-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.trackerStatus === state.trackerStatus);
   });
+  const statusSelect = document.getElementById("trackerStatusSelect");
+  if (statusSelect && statusSelect.value !== state.trackerStatus) statusSelect.value = state.trackerStatus;
   const dateLabel = document.getElementById("trackerDateLabel");
   const monthLabel = document.getElementById("trackerMonthLabel");
   const dateInput = document.getElementById("trackerDateInput");
@@ -1919,8 +1917,9 @@ function renderTrackerControls(filteredCount, startIndex, endIndex, totalPages) 
     "Apply Queue": "投递队列岗位",
     AppliedToday: "今日已投递岗位",
     Applied: "历史已投递岗位",
-    "Follow Up": "待跟进岗位",
-    Stale: "长期无回复岗位",
+    "Follow Up": "今天需跟进岗位",
+    Waiting: "等待反馈岗位",
+    Stale: "建议归档岗位",
     Paused: "暂停/放弃岗位",
     Rejected: "已拒绝岗位",
   };
@@ -1946,7 +1945,7 @@ function renderTrackerRows() {
     ? pageJobs.map((job) => `
         <tr>
           <td class="tracker-job-cell" data-label="岗位"><strong>${escapeHtml(job.company || "-")}</strong><span>${escapeHtml(job.position || "-")}</span><small>${escapeHtml(job.source || "-")}</small></td>
-          <td data-label="状态"><span class="status-pill">${escapeHtml(statusLabel(job.status))}</span></td>
+          <td data-label="状态"><span class="status-pill">${escapeHtml(statusLabel(job.status))}</span>${job.followup_priority_label ? `<span class="tracker-action-pill ${escapeHtml(job.followup_priority)}">${escapeHtml(job.followup_priority_label)}</span>` : ""}</td>
           <td data-label="匹配">${displayJobScore(job).toFixed(1)}</td>
           <td data-label="关键日期">${escapeHtml(timelineDate(job) || "-")}</td>
           <td class="tracker-next-cell" data-label="下一步">${escapeHtml(trackerNextStep(job))}</td>
@@ -3433,6 +3432,11 @@ function bindEvents() {
       state.trackerPage = 1;
       renderJobs();
     });
+  });
+  document.getElementById("trackerStatusSelect").addEventListener("change", (event) => {
+    state.trackerStatus = event.target.value;
+    state.trackerPage = 1;
+    renderJobs();
   });
   document.getElementById("trackerSearchInput").addEventListener("input", (event) => {
     state.trackerQuery = event.target.value;

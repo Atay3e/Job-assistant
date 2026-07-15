@@ -2088,6 +2088,14 @@ th {
   padding: 8px 11px;
 }
 
+.tracker-status-select-label {
+  display: none;
+}
+
+.tracker-controls > [hidden] {
+  display: none !important;
+}
+
 .tracker-table {
   min-width: 880px;
   table-layout: fixed;
@@ -2123,6 +2131,30 @@ th {
 .tracker-next-cell {
   color: var(--ink-soft);
   line-height: 1.45;
+}
+
+.tracker-action-pill {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #eef3f6;
+  color: #496273;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.tracker-action-pill.followup {
+  background: #e7f2ed;
+  color: var(--accent-dark);
+}
+
+.tracker-action-pill.archive {
+  background: #fff3d8;
+  color: #805d17;
 }
 
 .tracker-link-cell a {
@@ -3132,6 +3164,15 @@ pre {
 @media (max-width: 900px) {
   .tracker-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .tracker-controls .segment[aria-label="投递状态筛选"] {
+    display: none;
+  }
+
+  .tracker-status-select-label {
+    display: grid;
+    width: 100%;
   }
 
   .tracker-count {

@@ -639,11 +639,26 @@
                 <button class="segment-button tracker-status-button" data-tracker-status="Apply Queue">投递队列</button>
                 <button class="segment-button tracker-status-button" data-tracker-status="AppliedToday">今日已投</button>
                 <button class="segment-button tracker-status-button" data-tracker-status="Applied">历史已投</button>
-                <button class="segment-button tracker-status-button" data-tracker-status="Follow Up">待跟进</button>
-                <button class="segment-button tracker-status-button" data-tracker-status="Stale">长期无回复</button>
+                <button class="segment-button tracker-status-button" data-tracker-status="Follow Up">今天跟进</button>
+                <button class="segment-button tracker-status-button" data-tracker-status="Waiting">等待中</button>
+                <button class="segment-button tracker-status-button" data-tracker-status="Stale">建议归档</button>
                 <button class="segment-button tracker-status-button" data-tracker-status="Paused">暂停/放弃</button>
                 <button class="segment-button tracker-status-button" data-tracker-status="Rejected">已拒绝</button>
               </div>
+              <label class="tracker-status-select-label" for="trackerStatusSelect">
+                <span>记录类型</span>
+                <select id="trackerStatusSelect">
+                  <option value="all">全部记录</option>
+                  <option value="Apply Queue">投递队列</option>
+                  <option value="AppliedToday">今日已投</option>
+                  <option value="Applied">历史已投</option>
+                  <option value="Follow Up">今天跟进</option>
+                  <option value="Waiting">等待中</option>
+                  <option value="Stale">建议归档</option>
+                  <option value="Paused">暂停/放弃</option>
+                  <option value="Rejected">已拒绝</option>
+                </select>
+              </label>
               <label class="tracker-search-label">
                 <span>搜索记录</span>
                 <input id="trackerSearchInput" type="search" placeholder="公司、岗位或来源" autocomplete="off" />

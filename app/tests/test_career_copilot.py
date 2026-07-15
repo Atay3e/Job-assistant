@@ -387,6 +387,46 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(server.queue_decision(muted_job, reference)["priority"], "review")
         self.assertEqual(server.queue_decision(mismatched_job, reference)["priority"], "review")
 
+    def test_followup_decision_separates_due_waiting_and_archive(self):
+        reference = server.dt.date(2026, 7, 15)
+        due = {"status": "Applied", "applied_date": "2026-07-08", "followup_count": 0}
+        waiting = {
+            "status": "Applied",
+            "applied_date": "2026-07-01",
+            "last_followup_at": "2026-07-12",
+            "followup_count": 1,
+        }
+        archive = {
+            "status": "Applied",
+            "applied_date": "2026-06-20",
+            "last_followup_at": "2026-07-07",
+            "followup_count": 2,
+        }
+
+        self.assertEqual(server.followup_decision(due, reference)["priority"], "followup")
+        self.assertEqual(server.followup_decision(waiting, reference)["priority"], "waiting")
+        self.assertEqual(server.followup_decision(archive, reference)["priority"], "archive")
+
+    def test_ranked_applied_job_exposes_one_followup_decision_to_the_ui(self):
+        applied_date = (server.dt.date.today() - server.dt.timedelta(days=7)).strftime(server.DATE_FMT)
+        ranked = server.rank_job_with_preferences(
+            {
+                "company": "Followup Product Co",
+                "position": "Product Design Intern",
+                "status": "Applied",
+                "applied_date": applied_date,
+                "score": 4.0,
+                "region": "SG",
+            },
+            [],
+            {},
+            "SG",
+        )
+
+        self.assertEqual(ranked["followup_priority"], "followup")
+        self.assertEqual(ranked["followup_priority_label"], "今天跟进")
+        self.assertIn("跟进", ranked["followup_reason"])
+
     def test_parse_linkedin_fixture(self):
         jobs = server.parse_linkedin_jobs_from_html(self.fixture("linkedin.html"), "product design intern", 5)
         self.assertEqual(jobs[0]["external_job_id"], "4411111111")
