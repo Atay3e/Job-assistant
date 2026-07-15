@@ -1385,7 +1385,9 @@ function renderWorkbench() {
   }
 
   document.querySelectorAll("[data-today-bucket]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.todayBucket === state.todayRecommendationBucket);
+    const active = button.dataset.todayBucket === state.todayRecommendationBucket;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   const todayCount = document.getElementById("todayNewCount");
   const weeklyCount = document.getElementById("weeklyUnqueuedCount");
@@ -1688,7 +1690,9 @@ function renderJobs() {
     companies: "关注公司和公司岗位集中在这里，左侧选公司，右侧看岗位。",
   };
   document.querySelectorAll("[data-jobs-panel]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.jobsPanel === state.jobsPanel);
+    const active = button.dataset.jobsPanel === state.jobsPanel;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   document.querySelectorAll("[data-jobs-panel-section]").forEach((section) => {
     const active = section.dataset.jobsPanelSection === state.jobsPanel;
@@ -1723,7 +1727,9 @@ function renderJobs() {
   );
 
   document.querySelectorAll("[data-recommendation-view]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.recommendationView === state.recommendationView);
+    const active = button.dataset.recommendationView === state.recommendationView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   document.getElementById("fitJobCount").textContent = fitJobs.length;
   document.getElementById("aiJobCount").textContent = aiJobs.length;
@@ -3217,7 +3223,12 @@ function showView(view) {
     state.jobsPanel = "companies";
     view = "queue";
   }
-  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
+  document.querySelectorAll(".nav-item").forEach((item) => {
+    const active = item.dataset.view === view;
+    item.classList.toggle("active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  });
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
   document.getElementById(`${view}View`)?.classList.add("active");
   renderTopbarForView(view);

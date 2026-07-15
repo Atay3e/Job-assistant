@@ -2045,6 +2045,22 @@ class DailyRunTests(TempAppMixin, unittest.TestCase):
 
 
 class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
+    def test_workbench_action_titles_stay_compact_for_mobile_cards(self):
+        actions = server.workbench_actions(
+            {},
+            [{"id": 1}, {"id": 2}],
+            [{"queue_priority": "today"}],
+            [{"id": 3}],
+            {},
+            [{"id": 4}, {"id": 5}],
+        )
+        titles = {item["kind"]: item["title"] for item in actions}
+
+        self.assertEqual(titles["recommendations"], "每日推荐 2 个")
+        self.assertEqual(titles["queue"], "今日待投 1 个岗位")
+        self.assertEqual(titles["followup"], "待跟进 1 个岗位")
+        self.assertEqual(titles["stale"], "待整理 2 个岗位")
+
     def test_workbench_keeps_today_discoveries_beyond_the_default_job_limit(self):
         current_date = server.today()
         older_date = (server.dt.date.today() - server.dt.timedelta(days=2)).strftime(server.DATE_FMT)
@@ -4697,6 +4713,31 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
         stale = server.get_scan_run(stale_run_id)
         self.assertEqual(stale["status"], "interrupted")
         self.assertEqual(stale["sources"][0]["status"], "interrupted")
+
+
+class FrontendUxContractTests(unittest.TestCase):
+    def test_responsive_workbench_places_compact_followup_before_recommendations(self):
+        css = (Path(__file__).parents[1] / "public" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".followup-panel {\n    order: 2;", css)
+        self.assertIn(".priority-panel {\n    order: 3;", css)
+        self.assertIn(
+            ".followup-panel .source-refresh-card,\n  .followup-panel .company-quick-link,\n  .followup-panel .workbench-action-groups",
+            css,
+        )
+        self.assertIn(
+            ".followup-panel .queue-stat-grid {\n    grid-template-columns: repeat(4, minmax(0, 1fr));",
+            css,
+        )
+
+    def test_navigation_and_segmented_controls_expose_active_state(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+        index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('item.setAttribute("aria-current", "page")', app_js)
+        self.assertGreaterEqual(app_js.count('setAttribute("aria-pressed", String(active))'), 4)
+        self.assertIn('data-today-bucket="today_new" aria-pressed="true"', index_html)
+        self.assertIn('data-jobs-panel="recommendations" aria-pressed="true"', index_html)
 
 
 class ApplyAssistTests(TempAppMixin, unittest.TestCase):

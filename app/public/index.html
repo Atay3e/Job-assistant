@@ -10,7 +10,7 @@
       }
     </script>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css?v=20260714-tablet" />
+    <link rel="stylesheet" href="/styles.css?v=20260716-command-strip" />
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
   <body>
@@ -44,7 +44,7 @@
           </div>
         </div>
         <nav class="nav-list" aria-label="主视图">
-          <button class="nav-item active" data-view="today">今日</button>
+          <button class="nav-item active" data-view="today" aria-current="page">今日</button>
           <button class="nav-item" data-view="queue">岗位</button>
           <button class="nav-item" data-view="tracker">追踪</button>
           <button class="nav-item" data-view="profile">设置</button>
@@ -237,10 +237,10 @@
               </div>
               <div id="activeTagSummary" class="active-tag-summary"></div>
               <div id="todayRecommendationTabs" class="segment today-bucket-tabs" role="group" aria-label="今日推荐类型">
-                <button class="segment-button active" type="button" data-today-bucket="today_new">
+                <button class="segment-button active" type="button" data-today-bucket="today_new" aria-pressed="true">
                   今天新发现·可投 <span id="todayNewCount">0</span>
                 </button>
-                <button class="segment-button" type="button" data-today-bucket="weekly_unqueued">
+                <button class="segment-button" type="button" data-today-bucket="weekly_unqueued" aria-pressed="false">
                   近一周未投 <span id="weeklyUnqueuedCount">0</span>
                 </button>
               </div>
@@ -257,7 +257,12 @@
                   <p class="section-kicker">投递与跟进</p>
                   <h2>别让机会掉队</h2>
                 </div>
-                <button class="secondary-button compact-button" type="button" data-nav-queue>查看岗位</button>
+                <div class="panel-title-actions">
+                  <button class="secondary-button compact-button" type="button" data-nav-queue>查看岗位</button>
+                  <button class="icon-button refresh-icon-button" id="scanBtnCompact" type="button" aria-label="刷新招聘来源" title="刷新招聘来源">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13a8 8 0 0 1 14-5"/><path d="M18 3v5h-5"/><path d="M20 11a8 8 0 0 1-14 5"/><path d="M6 21v-5h5"/></svg>
+                  </button>
+                </div>
               </div>
               <div id="workbenchQueueStats" class="queue-stat-grid" aria-live="polite"></div>
               <section class="source-refresh-card" aria-label="招聘网站刷新">
@@ -266,9 +271,6 @@
                     <span id="workbenchScanLabel">扫描待命</span>
                     <p id="workbenchScanSummary">今天还没有扫描记录。</p>
                   </div>
-                  <button class="icon-button refresh-icon-button" id="scanBtnCompact" type="button" aria-label="刷新招聘来源" title="刷新招聘来源">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13a8 8 0 0 1 14-5"/><path d="M18 3v5h-5"/><path d="M20 11a8 8 0 0 1-14 5"/><path d="M6 21v-5h5"/></svg>
-                  </button>
                 </div>
                 <details class="source-detail-disclosure">
                   <summary>查看来源详情</summary>
@@ -517,9 +519,9 @@
           </div>
           <div class="panel jobs-hub-toolbar">
             <div class="segment jobs-panel-tabs" role="group" aria-label="岗位页面">
-              <button class="segment-button active" type="button" data-jobs-panel="recommendations">补充候选</button>
-              <button class="segment-button" type="button" data-jobs-panel="queue">投递队列</button>
-              <button class="segment-button" type="button" data-jobs-panel="companies">关注公司</button>
+              <button class="segment-button active" type="button" data-jobs-panel="recommendations" aria-pressed="true">补充候选</button>
+              <button class="segment-button" type="button" data-jobs-panel="queue" aria-pressed="false">投递队列</button>
+              <button class="segment-button" type="button" data-jobs-panel="companies" aria-pressed="false">关注公司</button>
             </div>
             <p class="small-text" id="jobsPanelHint">这里补看每日推荐之外的候选；队列和关注公司岗位各走自己的板块。</p>
           </div>
@@ -531,15 +533,15 @@
                 <p id="recommendationContext" class="small-text">推荐会综合画像、岗位匹配、可转正、工签和语言信号；薪资仍只软排序。</p>
               </div>
               <div class="recommendation-tabs" role="group" aria-label="推荐视角">
-                <button class="recommendation-tab active" data-recommendation-view="fit">
+                <button class="recommendation-tab active" data-recommendation-view="fit" aria-pressed="true">
                   <span>留新补充</span>
                   <strong id="fitJobCount">0</strong>
                 </button>
-                <button class="recommendation-tab" data-recommendation-view="ai">
+                <button class="recommendation-tab" data-recommendation-view="ai" aria-pressed="false">
                   <span>AI 方向</span>
                   <strong id="aiJobCount">0</strong>
                 </button>
-                <button class="recommendation-tab" data-recommendation-view="general">
+                <button class="recommendation-tab" data-recommendation-view="general" aria-pressed="false">
                   <span>高分补漏</span>
                   <strong id="generalJobCount">0</strong>
                 </button>
@@ -937,6 +939,6 @@
       </div>
     </dialog>
 
-    <script src="/app.js?v=20260714-followup-draft"></script>
+    <script src="/app.js?v=20260716-command-strip"></script>
   </body>
 </html>

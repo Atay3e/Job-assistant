@@ -2495,6 +2495,12 @@ pre {
   font-size: 17px;
 }
 
+.panel-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .action-panel,
 .followup-panel,
 .priority-panel {
@@ -3145,6 +3151,18 @@ pre {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .action-panel {
+    order: 1;
+  }
+
+  .followup-panel {
+    order: 2;
+  }
+
+  .priority-panel {
+    order: 3;
+  }
+
   .priority-panel {
     min-height: 0;
   }
@@ -3366,6 +3384,34 @@ pre {
 
   .daily-command-center .panel {
     padding: 14px;
+  }
+
+  .followup-panel .panel-title-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .followup-panel .queue-stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 0;
+  }
+
+  .followup-panel .queue-stat-grid div {
+    gap: 2px;
+    min-width: 0;
+    padding: 8px 5px;
+  }
+
+  .followup-panel .queue-stat-grid strong {
+    font-size: 18px;
+  }
+
+  .followup-panel .source-refresh-card,
+  .followup-panel .company-quick-link,
+  .followup-panel .workbench-action-groups {
+    display: none;
   }
 
   #todayActionList {

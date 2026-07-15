@@ -10379,7 +10379,7 @@ def workbench_actions(
         top = recommendations[:3]
         actions.append({
             "kind": "recommendations",
-            "title": f"先看 {len(recommendations)} 个每日推荐岗位",
+            "title": f"每日推荐 {len(recommendations)} 个",
             "body": "这些岗位已避开关注公司刷屏，并按标签、留新路径和分数排序。",
             "view": "today",
             "priority": 90,
@@ -10391,9 +10391,9 @@ def workbench_actions(
             priority = str(job.get("queue_priority") or queue_decision(job)["priority"])
             priority_counts[priority] = priority_counts.get(priority, 0) + 1
         title = (
-            f"今天先投 {priority_counts['today']} 个岗位"
+            f"今日待投 {priority_counts['today']} 个岗位"
             if priority_counts["today"]
-            else f"投递队列里有 {len(queue_jobs)} 个岗位"
+            else f"待投递 {len(queue_jobs)} 个岗位"
         )
         actions.append({
             "kind": "queue",
@@ -10405,7 +10405,7 @@ def workbench_actions(
     if followups:
         actions.append({
             "kind": "followup",
-            "title": f"{len(followups)} 个岗位需要跟进",
+            "title": f"待跟进 {len(followups)} 个岗位",
             "body": "已投递超过 3 天的岗位可以做一次轻量 follow-up。",
             "view": "tracker",
             "priority": 78,
@@ -10413,7 +10413,7 @@ def workbench_actions(
     if stale_applications:
         actions.append({
             "kind": "stale",
-            "title": f"{len(stale_applications)} 个长期无回复岗位待整理",
+            "title": f"待整理 {len(stale_applications)} 个岗位",
             "body": "做最后一次确认，仍无进展的可以暂停，保留记录但不占每日注意力。",
             "view": "tracker",
             "priority": 72,
