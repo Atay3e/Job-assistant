@@ -3982,6 +3982,48 @@ class MultiRegionTests(TempAppMixin, unittest.TestCase):
             [],
         )
 
+    def test_duplicate_public_source_is_excluded_when_matching_watched_source_job_exists(self):
+        public_job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "WIZ.AI",
+                "position": "Product Intern",
+                "source": "LinkedIn",
+                "url": "https://example.com/linkedin-wiz-product-intern",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        watched_source_job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "WIZ.AI",
+                "position": "Product Intern",
+                "source": "关注公司公开来源",
+                "url": "https://example.com/watched-wiz-product-intern",
+                "jd_text": "Singapore product internship.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set score=4.8, status='Recommended' where id in (?, ?)",
+                (public_job["id"], watched_source_job["id"]),
+            )
+
+        jobs = server.list_jobs_payload({"region": ["SG"], "compact": ["1"]})
+        duplicate_rows = [job for job in jobs if job["id"] in {public_job["id"], watched_source_job["id"]}]
+
+        self.assertEqual(len(duplicate_rows), 2)
+        self.assertTrue(all(job["company_watched_by_user"] for job in duplicate_rows))
+        self.assertTrue(all(not job["supplemental_candidate"] for job in duplicate_rows))
+        recommendations = server.list_today_recommendations({"region": ["SG"], "limit": ["20"]})
+        recommendation_ids = {
+            item_id
+            for job in recommendations["jobs"]
+            for item_id in [job["id"], *[link.get("id") for link in job.get("alternate_links", [])]]
+        }
+        self.assertNotIn(public_job["id"], recommendation_ids)
+        self.assertNotIn(watched_source_job["id"], recommendation_ids)
+
     def test_company_catalog_marks_current_city_match(self):
         server.save_user_context({"active_region": "CN", "context": {"city": "Shanghai"}})
         catalog = server.company_catalog("CN", "Shanghai")

@@ -9948,7 +9948,26 @@ def apply_preference_scores_to_jobs(jobs: list[dict], region: str | None = None)
             and not item["company_hidden_by_watchlist"]
         )
         ranked.append(item)
-    return ranked
+    return propagate_duplicate_job_visibility(ranked)
+
+
+def propagate_duplicate_job_visibility(jobs: list[dict]) -> list[dict]:
+    group_visibility: dict[str, dict[str, bool]] = {}
+    for job in jobs:
+        key = job_dedupe_key(job)
+        visibility = group_visibility.setdefault(key, {"watched": False, "hidden": False})
+        visibility["watched"] = visibility["watched"] or bool(job.get("company_watched_by_user"))
+        visibility["hidden"] = visibility["hidden"] or bool(job.get("company_hidden_by_watchlist"))
+
+    for job in jobs:
+        visibility = group_visibility[job_dedupe_key(job)]
+        if visibility["watched"]:
+            job["company_watched_by_user"] = True
+        if visibility["hidden"]:
+            job["company_hidden_by_watchlist"] = True
+        if visibility["watched"] or visibility["hidden"]:
+            job["supplemental_candidate"] = False
+    return jobs
 
 
 COMPACT_JOB_FIELDS = {
