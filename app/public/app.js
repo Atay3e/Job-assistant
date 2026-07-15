@@ -1266,11 +1266,12 @@ function sourceMiniRow(row) {
   const label = SCAN_STATUS_ZH[status] || status;
   const discovered = Number(row.new_count || 0);
   const updated = Number(row.updated_count || 0);
+  const unchanged = Number(row.unchanged_count || 0);
   const duplicates = Number(row.duplicate_count || 0);
   const failures = Number(row.failure_count || 0);
-  const hasQualityCounts = discovered > 0 || updated > 0 || duplicates > 0;
+  const hasQualityCounts = discovered > 0 || updated > 0 || unchanged > 0 || duplicates > 0;
   const quality = hasQualityCounts
-    ? `${discovered} 新 · ${updated} 更新${duplicates ? ` · ${duplicates} 重复` : ""}`
+    ? `${discovered} 新 · ${updated} 更新 · ${unchanged} 复核${duplicates ? ` · ${duplicates} 重复` : ""}`
     : `${Number(row.saved_count || 0)} 保存/更新`;
   const meta = `${scanModeLabel(row.mode)} · ${quality}${failures ? ` · ${failures} 受限` : ""}`;
   return `
@@ -1481,7 +1482,7 @@ function renderMetrics() {
 function scanRunSummary(run) {
   if (!run) return "今天还没有扫描记录。";
   const failures = Array.isArray(run.failures_json) ? run.failures_json.length : 0;
-  return `最近扫描 ${SCAN_STATUS_ZH[run.status] || run.status}：${run.new_count || 0} 条新发现，${run.updated_count || 0} 条更新，合并 ${run.duplicate_count || 0} 条重复；推荐 ${run.recommended_count || 0} 条。失败/受限：${failures} 条。`;
+  return `最近扫描 ${SCAN_STATUS_ZH[run.status] || run.status}：${run.new_count || 0} 条新发现，${run.updated_count || 0} 条内容更新，${run.unchanged_count || 0} 条复核无变化，合并 ${run.duplicate_count || 0} 条重复；推荐 ${run.recommended_count || 0} 条。失败/受限：${failures} 条。`;
 }
 
 function renderScanRun(payload = {}) {
@@ -1514,17 +1515,18 @@ function renderScanRun(payload = {}) {
 
   const aggregate = new Map();
   expected.map((item) => typeof item === "string" ? scanSourceLabel(item) : scanSourceLabel(item.source)).forEach((source) => {
-    aggregate.set(source, { source, status: "pending", mode: sourceModes.get(source) || "primary", scanned_count: 0, saved_count: 0, new_count: 0, updated_count: 0, duplicate_count: 0, failure_count: 0 });
+    aggregate.set(source, { source, status: "pending", mode: sourceModes.get(source) || "primary", scanned_count: 0, saved_count: 0, new_count: 0, updated_count: 0, unchanged_count: 0, duplicate_count: 0, failure_count: 0 });
   });
   (run?.sources || []).forEach((item) => {
     const source = scanSourceLabel(item.source);
-    const existing = aggregate.get(source) || { source, status: "pending", mode: item.mode || sourceModes.get(source) || "primary", scanned_count: 0, saved_count: 0, new_count: 0, updated_count: 0, duplicate_count: 0, failure_count: 0 };
+    const existing = aggregate.get(source) || { source, status: "pending", mode: item.mode || sourceModes.get(source) || "primary", scanned_count: 0, saved_count: 0, new_count: 0, updated_count: 0, unchanged_count: 0, duplicate_count: 0, failure_count: 0 };
     existing.status = mergeScanStatus(existing.status, item.status || "pending");
     existing.mode = item.mode || existing.mode;
     existing.scanned_count += Number(item.scanned_count || 0);
     existing.saved_count += Number(item.saved_count || 0);
     existing.new_count += Number(item.new_count || 0);
     existing.updated_count += Number(item.updated_count || 0);
+    existing.unchanged_count += Number(item.unchanged_count || 0);
     existing.duplicate_count += Number(item.duplicate_count || 0);
     existing.failure_count += Number(item.failure_count || 0);
     aggregate.set(source, existing);
@@ -1543,7 +1545,7 @@ function renderScanRun(payload = {}) {
         <span class="source-dot" aria-hidden="true"></span>
         <div>
           <strong>${escapeHtml(source)}</strong>
-          <span>${escapeHtml(scanModeLabel(row.mode))} · ${row.new_count || 0} 新发现 · ${row.updated_count || 0} 更新 · ${row.duplicate_count || 0} 合并重复 · ${row.failure_count || 0} 失败</span>
+          <span>${escapeHtml(scanModeLabel(row.mode))} · ${row.new_count || 0} 新发现 · ${row.updated_count || 0} 内容更新 · ${row.unchanged_count || 0} 复核无变化 · ${row.duplicate_count || 0} 合并重复 · ${row.failure_count || 0} 失败</span>
         </div>
         <span class="status-pill ${row.status}">${escapeHtml(label)}</span>
       </div>

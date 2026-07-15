@@ -2554,6 +2554,7 @@ def setup_db() -> None:
                 saved_count integer not null default 0,
                 new_count integer not null default 0,
                 updated_count integer not null default 0,
+                unchanged_count integer not null default 0,
                 duplicate_count integer not null default 0,
                 recommended_count integer not null default 0,
                 ai_recommended_count integer not null default 0,
@@ -2573,6 +2574,7 @@ def setup_db() -> None:
                 saved_count integer not null default 0,
                 new_count integer not null default 0,
                 updated_count integer not null default 0,
+                unchanged_count integer not null default 0,
                 duplicate_count integer not null default 0,
                 failure_count integer not null default 0,
                 failures_json text not null default '[]',
@@ -2645,9 +2647,11 @@ def setup_db() -> None:
                 ensure_column(conn, "scan_runs", "source_region", "text")
                 ensure_column(conn, "scan_runs", "new_count", "integer not null default 0")
                 ensure_column(conn, "scan_runs", "updated_count", "integer not null default 0")
+                ensure_column(conn, "scan_runs", "unchanged_count", "integer not null default 0")
                 ensure_column(conn, "scan_runs", "duplicate_count", "integer not null default 0")
                 ensure_column(conn, "scan_source_runs", "new_count", "integer not null default 0")
                 ensure_column(conn, "scan_source_runs", "updated_count", "integer not null default 0")
+                ensure_column(conn, "scan_source_runs", "unchanged_count", "integer not null default 0")
                 ensure_column(conn, "scan_source_runs", "duplicate_count", "integer not null default 0")
                 migrate_watch_companies_table(conn)
                 seed_default_watch_companies(conn)
@@ -7522,6 +7526,7 @@ def finish_scan_source_run(
     new_count: int = 0,
     updated_count: int = 0,
     duplicate_count: int = 0,
+    unchanged_count: int = 0,
 ) -> None:
     stamp = now_iso()
     with get_db() as conn:
@@ -7534,6 +7539,7 @@ def finish_scan_source_run(
                 saved_count=?,
                 new_count=?,
                 updated_count=?,
+                unchanged_count=?,
                 duplicate_count=?,
                 failure_count=?,
                 failures_json=?,
@@ -7547,6 +7553,7 @@ def finish_scan_source_run(
                 saved,
                 new_count,
                 updated_count,
+                unchanged_count,
                 duplicate_count,
                 len(failures),
                 json.dumps(failures, ensure_ascii=False),
@@ -7567,6 +7574,7 @@ def finish_scan_run(
     new_count: int = 0,
     updated_count: int = 0,
     duplicate_count: int = 0,
+    unchanged_count: int = 0,
 ) -> None:
     stamp = now_iso()
     with get_db() as conn:
@@ -7579,6 +7587,7 @@ def finish_scan_run(
                 saved_count=?,
                 new_count=?,
                 updated_count=?,
+                unchanged_count=?,
                 duplicate_count=?,
                 recommended_count=?,
                 ai_recommended_count=?,
@@ -7593,6 +7602,7 @@ def finish_scan_run(
                 saved,
                 new_count,
                 updated_count,
+                unchanged_count,
                 duplicate_count,
                 recommended,
                 ai_recommended,
@@ -7628,6 +7638,7 @@ def mark_scan_run_interrupted(scan_run_id: int) -> None:
                 coalesce(sum(saved_count), 0) as saved,
                 coalesce(sum(new_count), 0) as new_count,
                 coalesce(sum(updated_count), 0) as updated_count,
+                coalesce(sum(unchanged_count), 0) as unchanged_count,
                 coalesce(sum(duplicate_count), 0) as duplicate_count,
                 coalesce(sum(failure_count), 0) as failure_count
             from scan_source_runs
@@ -7652,6 +7663,7 @@ def mark_scan_run_interrupted(scan_run_id: int) -> None:
                 saved_count=?,
                 new_count=?,
                 updated_count=?,
+                unchanged_count=?,
                 duplicate_count=?,
                 failures_json=?,
                 updated_at=?
@@ -7663,6 +7675,7 @@ def mark_scan_run_interrupted(scan_run_id: int) -> None:
                 int(totals["saved"] or 0),
                 int(totals["new_count"] or 0),
                 int(totals["updated_count"] or 0),
+                int(totals["unchanged_count"] or 0),
                 int(totals["duplicate_count"] or 0),
                 json.dumps(failures, ensure_ascii=False),
                 stamp,
@@ -7735,6 +7748,38 @@ def latest_successful_scan(run_date: str | None = None, region: str | None = Non
         return get_scan_run(row["id"]) if row else None
 
 
+def scan_content_fingerprint(value: str) -> str:
+    text = re.sub(r"(?im)^\s*(?:source\s+query|query)\s*:.*$", " ", value or "")
+    text = re.sub(r"(?i)\b\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?)\s+ago\b", " ", text)
+    text = re.sub(r"(?i)\b\d[\d,]*\s+applicants?\b", " ", text)
+    normalized = clean_text(text).lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def is_scan_result_stub(value: str) -> bool:
+    text = value or ""
+    return len(clean_text(text)) < 500 and bool(
+        re.search(r"(?im)^\s*(?:source\s+query|query)\s*:", text)
+    )
+
+
+def scan_job_content_changed(existing: dict, incoming: dict) -> bool:
+    jd_text = (incoming.get("jd_text") or incoming.get("JD") or "").strip()
+    comparisons = [
+        (clean_company_name(incoming.get("company") or "") or "Unknown Company", existing.get("company") or ""),
+        ((incoming.get("position") or "").strip() or "Unknown Position", existing.get("position") or ""),
+        ((incoming.get("source") or "Manual").strip(), existing.get("source") or ""),
+        ((incoming.get("location") or "").strip(), existing.get("location") or ""),
+        ((incoming.get("job_type") or "").strip(), existing.get("job_type") or ""),
+    ]
+    if any(str(new_value) != str(old_value) for new_value, old_value in comparisons):
+        return True
+    existing_text = existing.get("jd_text") or ""
+    if is_scan_result_stub(jd_text) and not is_scan_result_stub(existing_text):
+        return False
+    return scan_content_fingerprint(jd_text) != scan_content_fingerprint(existing_text)
+
+
 def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id: int | None = None, region: str | None = None) -> dict:
     code = active_region_code(region)
     context = active_region_context(code)
@@ -7747,9 +7792,15 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
     seen_urls: set[str] = set()
     seen_dedupe_keys: set[str] = set()
     with get_db() as conn:
-        existing_urls = {row["url"] for row in conn.execute("select url from jobs where url<>''").fetchall()}
+        existing_jobs = {
+            row["url"]: row_to_dict(row)
+            for row in conn.execute(
+                "select url, company, position, source, location, job_type, jd_text, jd_hash from jobs where url<>''"
+            ).fetchall()
+        }
     new_count = 0
     updated_count = 0
+    unchanged_count = 0
     duplicate_count = 0
     scan_user_id = request_user_id()
     source_run_ids = {name: create_scan_source_run(scan_run_id, name) for name, _fetcher, _limit in sources}
@@ -7777,6 +7828,7 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
         source_saved = 0
         source_new = 0
         source_updated = 0
+        source_unchanged = 0
         source_duplicates = 0
         source_failure_items: list[dict] = []
         raw_jobs, source_errors = fetch_results.get(source_name, ([], ["来源抓取未返回结果。"]))
@@ -7813,12 +7865,16 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
             else:
                 seen_dedupe_keys.add(dedupe_key)
             try:
+                existing_job = existing_jobs.get(url)
                 saved_job = upsert_job(raw_job)
                 saved.append(saved_job)
                 source_saved += 1
-                if url in existing_urls:
+                if existing_job and scan_job_content_changed(existing_job, raw_job):
                     source_updated += 1
                     updated_count += 1
+                elif existing_job:
+                    source_unchanged += 1
+                    unchanged_count += 1
                 else:
                     source_new += 1
                     new_count += 1
@@ -7843,6 +7899,7 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
             source_new,
             source_updated,
             source_duplicates,
+            source_unchanged,
         )
 
     recommended = [
@@ -7872,6 +7929,7 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
         new_count,
         updated_count,
         duplicate_count,
+        unchanged_count,
     )
     generate_report(code)
     result = {
@@ -7883,6 +7941,7 @@ def scan_sources(triggered_by: str = "manual", forced: bool = True, scan_run_id:
         "saved": len(saved),
         "new": new_count,
         "updated": updated_count,
+        "unchanged": unchanged_count,
         "duplicates": duplicate_count,
         "recommended": len(recommended),
         "ai_recommended": ai_recommended,
@@ -8693,6 +8752,20 @@ def upsert_job(payload: dict) -> dict:
     if not jd_text:
         jd_text = "JD not pasted yet. Preserve URL and update JD before drafting."
 
+    with get_db() as conn:
+        existing_detail = conn.execute(
+            "select id, company, position, jd_text from jobs where url=?",
+            (url,),
+        ).fetchone()
+    if (
+        existing_detail
+        and is_scan_result_stub(jd_text)
+        and not is_scan_result_stub(existing_detail["jd_text"] or "")
+        and clean_company_name(existing_detail["company"] or "") == company
+        and (existing_detail["position"] or "").strip() == position
+    ):
+        jd_text = existing_detail["jd_text"]
+
     metadata = job_metadata(position, jd_text, job_type, region, company, source)
     application_deadline = (
         normalize_application_deadline(str(payload.get("application_deadline") or ""))
@@ -8714,7 +8787,7 @@ def upsert_job(payload: dict) -> dict:
     cover_path = None
 
     with get_db() as conn:
-        existing = conn.execute("select id from jobs where url = ?", (url,)).fetchone()
+        existing = existing_detail or conn.execute("select id from jobs where url = ?", (url,)).fetchone()
         if existing:
             conn.execute(
                 """
@@ -10292,11 +10365,12 @@ def scan_run_summary_text(run: dict | None) -> str:
     }.get(status, status)
     new_count = int(run.get("new_count") or 0)
     updated_count = int(run.get("updated_count") or 0)
+    unchanged_count = int(run.get("unchanged_count") or 0)
     duplicate_count = int(run.get("duplicate_count") or 0)
-    if new_count or updated_count or duplicate_count:
+    if new_count or updated_count or unchanged_count or duplicate_count:
         return (
             f"{label}：{new_count} 条新发现，{updated_count} 条更新，"
-            f"合并 {duplicate_count} 条重复，失败/受限 {failures} 条。"
+            f"{unchanged_count} 条复核无变化，合并 {duplicate_count} 条重复，失败/受限 {failures} 条。"
         )
     return f"{label}：抓到 {run.get('scanned_count') or 0} 条，保存/更新 {run.get('saved_count') or 0} 条，失败/受限 {failures} 条。"
 
@@ -10314,6 +10388,7 @@ def scan_overview(scan_payload: dict) -> dict:
             "saved_count": 0,
             "new_count": 0,
             "updated_count": 0,
+            "unchanged_count": 0,
             "duplicate_count": 0,
             "failure_count": 0,
         }
@@ -10332,6 +10407,7 @@ def scan_overview(scan_payload: dict) -> dict:
             "saved_count": source.get("saved_count") or 0,
             "new_count": source.get("new_count") or 0,
             "updated_count": source.get("updated_count") or 0,
+            "unchanged_count": source.get("unchanged_count") or 0,
             "duplicate_count": source.get("duplicate_count") or 0,
             "failure_count": source.get("failure_count") or 0,
         }
@@ -10351,6 +10427,7 @@ def scan_overview(scan_payload: dict) -> dict:
         "failure_count": len(run.get("failures_json") or []),
         "new_count": run.get("new_count") or 0,
         "updated_count": run.get("updated_count") or 0,
+        "unchanged_count": run.get("unchanged_count") or 0,
         "duplicate_count": run.get("duplicate_count") or 0,
         "last_success": latest_success.get("finished_at") or latest_success.get("started_at"),
         "sources": sources,

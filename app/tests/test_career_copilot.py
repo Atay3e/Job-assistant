@@ -2651,6 +2651,7 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
             5,
             4,
             3,
+            unchanged_count=6,
         )
         server.finish_scan_run(
             run_id,
@@ -2663,6 +2664,7 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
             5,
             4,
             3,
+            unchanged_count=6,
         )
 
         overview = server.workbench_payload({"region": ["SG"]})["scan_overview"]
@@ -2671,10 +2673,13 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
         self.assertEqual(overview["new_count"], 5)
         self.assertEqual(overview["updated_count"], 4)
         self.assertEqual(overview["duplicate_count"], 3)
+        self.assertEqual(overview["unchanged_count"], 6)
         self.assertIn("5 条新发现", overview["summary"])
+        self.assertIn("6 条复核无变化", overview["summary"])
         self.assertEqual(linkedin["new_count"], 5)
         self.assertEqual(linkedin["updated_count"], 4)
         self.assertEqual(linkedin["duplicate_count"], 3)
+        self.assertEqual(linkedin["unchanged_count"], 6)
 
     def test_workbench_returns_twenty_priority_jobs_and_excludes_watched_company_jobs(self):
         with server.get_db() as conn:
@@ -4576,6 +4581,15 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
                 "jd_text": "Existing Singapore UX internship.",
             }
         )
+        unchanged = server.upsert_job(
+            {
+                "company": "Stable Scan Co",
+                "position": "Product Operations Intern",
+                "source": "InternSG",
+                "url": "https://www.internsg.com/job/stable-scan-quality/",
+                "jd_text": "Stable Singapore product operations internship.\n2 days ago · 84 applicants\nSource query: product intern",
+            }
+        )
 
         def fixture_source(limit):
             new_job = {
@@ -4595,6 +4609,13 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
                     "url": existing["url"],
                     "jd_text": "Updated Singapore UX internship.",
                 },
+                {
+                    "company": "Stable Scan Co",
+                    "position": "Product Operations Intern",
+                    "source": "InternSG",
+                    "url": unchanged["url"],
+                    "jd_text": "Stable Singapore product operations internship.\n3 days ago · 91 applicants\nSource query: ai product intern",
+                },
             ], []
 
         with (
@@ -4604,18 +4625,61 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
         ):
             result = server.scan_sources(region="SG")
 
-        self.assertEqual(result["scanned"], 3)
-        self.assertEqual(result["saved"], 2)
+        self.assertEqual(result["scanned"], 4)
+        self.assertEqual(result["saved"], 3)
         self.assertEqual(result["new"], 1)
         self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["unchanged"], 1)
         self.assertEqual(result["duplicates"], 1)
         self.assertEqual(result["scan_run"]["new_count"], 1)
         self.assertEqual(result["scan_run"]["updated_count"], 1)
+        self.assertEqual(result["scan_run"]["unchanged_count"], 1)
         self.assertEqual(result["scan_run"]["duplicate_count"], 1)
         source_run = result["scan_run"]["sources"][0]
         self.assertEqual(source_run["new_count"], 1)
         self.assertEqual(source_run["updated_count"], 1)
+        self.assertEqual(source_run["unchanged_count"], 1)
         self.assertEqual(source_run["duplicate_count"], 1)
+
+    def test_scan_stub_does_not_overwrite_or_report_richer_existing_detail_as_updated(self):
+        detail = (
+            "Responsibilities Build and improve an AI product for Singapore customers. "
+            "Work with product, design, engineering and operations teams. "
+            "Qualifications Current university student with research and prototyping experience. "
+        ) * 4
+        existing = server.upsert_job(
+            {
+                "company": "Detail Safe Co",
+                "position": "AI Product Intern",
+                "source": "LinkedIn",
+                "url": "https://www.linkedin.com/jobs/view/4440000101",
+                "location": "Singapore",
+                "job_type": "Internship / Full-time",
+                "jd_text": detail,
+            }
+        )
+
+        def fixture_source(limit):
+            return [{
+                "company": "Detail Safe Co",
+                "position": "AI Product Intern",
+                "source": "LinkedIn",
+                "url": existing["url"],
+                "location": "Singapore",
+                "job_type": "Internship / Full-time",
+                "jd_text": "AI Product Intern\nDetail Safe Co\nSingapore\nSource query: ai product intern",
+            }], []
+
+        with (
+            mock.patch.object(server, "scan_source_definitions", return_value=[("Fixture", fixture_source, 1)]),
+            mock.patch.object(server, "generate_report"),
+            mock.patch.object(server, "list_ai_jobs", return_value=[]),
+        ):
+            result = server.scan_sources(region="SG")
+
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["unchanged"], 1)
+        self.assertEqual(server.get_job(existing["id"])["jd_text"], detail.strip())
 
     def test_rescan_promotes_new_jobs_without_overwriting_user_decisions(self):
         url = "https://example.com/rescored-role"
@@ -4716,6 +4780,12 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
 
 
 class FrontendUxContractTests(unittest.TestCase):
+    def test_scan_quality_copy_distinguishes_updates_from_unchanged_checks(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("row.unchanged_count", app_js)
+        self.assertIn("复核无变化", app_js)
+
     def test_company_jobs_render_progressively_as_compact_rows(self):
         app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
         css = (Path(__file__).parents[1] / "public" / "styles.css").read_text(encoding="utf-8")
