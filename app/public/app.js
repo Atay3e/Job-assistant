@@ -30,6 +30,7 @@ const state = {
   workbench: {},
   companyJobs: {},
   companyJobsLoading: {},
+  companyJobsVisibleCount: 6,
   workspaceDataLoaded: false,
   workspaceDataKey: "",
   workspaceDataPromise: null,
@@ -59,6 +60,7 @@ const state = {
 const TODAY_RECOMMENDATION_PAGE_SIZE = 8;
 const SUPPLEMENTAL_RECOMMENDATION_PAGE_SIZE = 8;
 const SUPPLEMENTAL_RECOMMENDATION_POOL_SIZE = 40;
+const COMPANY_JOB_PAGE_SIZE = 6;
 const WORKBENCH_CORE_TAGS = new Set([
   "internship", "graduate", "full_time", "contract",
   "conversion_strong", "conversion_possible", "conversion_none",
@@ -195,6 +197,7 @@ function resetPrivateState() {
     scan: {},
     companyJobs: {},
     companyJobsLoading: {},
+    companyJobsVisibleCount: COMPANY_JOB_PAGE_SIZE,
     workspaceDataLoaded: false,
     workspaceDataKey: "",
     workspaceDataPromise: null,
@@ -2159,10 +2162,22 @@ function renderCompanyJobs() {
   } else if (loading) {
     container.innerHTML = emptyState("正在加载这家公司匹配岗位...");
   } else if (jobs.length) {
-    container.innerHTML = jobs.map((job) => jobCard({
-      ...job,
-      source: job.company_match_source_label || job.source,
-    })).join("");
+    const visibleCount = Math.max(
+      COMPANY_JOB_PAGE_SIZE,
+      Number(state.companyJobsVisibleCount || COMPANY_JOB_PAGE_SIZE),
+    );
+    const shownCount = Math.min(visibleCount, jobs.length);
+    const remainingCount = Math.max(0, jobs.length - shownCount);
+    container.innerHTML = `
+      ${jobs.slice(0, visibleCount).map((job) => compactJobRow({
+        ...job,
+        source: job.company_match_source_label || job.source,
+      })).join("")}
+      <div class="company-job-footer" role="status" aria-live="polite">
+        <span class="small-text">已显示 ${shownCount} / ${jobs.length}</span>
+        ${remainingCount ? `<button class="secondary-button compact-button" type="button" data-show-more-company-jobs>再看 ${Math.min(COMPANY_JOB_PAGE_SIZE, remainingCount)} 个</button>` : ""}
+      </div>
+    `;
   } else {
     container.innerHTML = emptyState(payload.last_scan_note || company.last_scan_note || "暂时没有抓到这家公司可展示岗位。");
   }
@@ -2179,6 +2194,7 @@ function renderWatchlist() {
   if (state.selectedCompany && !allNames.has(state.selectedCompany)) state.selectedCompany = "";
   if (!state.selectedCompany) {
     state.selectedCompany = state.watchlist[0]?.company || recommended[0]?.company || "";
+    state.companyJobsVisibleCount = COMPANY_JOB_PAGE_SIZE;
   }
   const visibleRecommended = state.showAllCompanyRecommendations ? recommended : recommended.slice(0, 6);
   watched.hidden = state.companyTab !== "watched";
@@ -3383,6 +3399,11 @@ function bindEvents() {
       renderJobs();
       return;
     }
+    if (event.target.closest("[data-show-more-company-jobs]")) {
+      state.companyJobsVisibleCount += COMPANY_JOB_PAGE_SIZE;
+      renderCompanyJobs();
+      return;
+    }
     if (event.target.closest("[data-nav-fit]")) showView("fit");
     if (event.target.closest("[data-nav-companies]")) {
       state.jobsPanel = "companies";
@@ -3398,6 +3419,7 @@ function bindEvents() {
     const miniCompany = event.target.closest("[data-company-mini]");
     if (miniCompany) {
       state.selectedCompany = miniCompany.dataset.companyMini;
+      state.companyJobsVisibleCount = COMPANY_JOB_PAGE_SIZE;
       state.companyTab = "recommended";
       state.jobsPanel = "companies";
       showView("queue");
@@ -3412,6 +3434,7 @@ function bindEvents() {
     if (!card) return;
     if (event.target.closest("[data-watch-action]")) return;
     state.selectedCompany = card.dataset.company;
+    state.companyJobsVisibleCount = COMPANY_JOB_PAGE_SIZE;
     renderWatchlist();
   }));
   document.querySelectorAll("[data-company-tab]").forEach((button) => {

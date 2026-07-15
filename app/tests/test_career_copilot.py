@@ -4716,6 +4716,16 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
 
 
 class FrontendUxContractTests(unittest.TestCase):
+    def test_company_jobs_render_progressively_as_compact_rows(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+        css = (Path(__file__).parents[1] / "public" / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("const COMPANY_JOB_PAGE_SIZE = 6;", app_js)
+        self.assertIn("jobs.slice(0, visibleCount).map((job) => compactJobRow", app_js)
+        self.assertIn('data-show-more-company-jobs', app_js)
+        self.assertIn("state.companyJobsVisibleCount += COMPANY_JOB_PAGE_SIZE", app_js)
+        self.assertIn("max-height: min(52dvh, 460px);", css)
+
     def test_responsive_workbench_places_compact_followup_before_recommendations(self):
         css = (Path(__file__).parents[1] / "public" / "styles.css").read_text(encoding="utf-8")
 

@@ -1965,6 +1965,17 @@ th {
   max-height: none;
 }
 
+.company-job-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 .mini-company-button {
   width: 100%;
   border: 1px solid var(--line);
@@ -3595,8 +3606,9 @@ pre {
   }
 
   .compact-company-list {
-    max-height: none;
-    overflow: visible;
+    max-height: min(52dvh, 460px);
+    overflow: auto;
+    overscroll-behavior: contain;
   }
 
   .company-row-actions,
