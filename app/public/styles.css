@@ -1078,11 +1078,24 @@ button.is-error {
   color: var(--accent-dark);
 }
 
+.preference-mode-tabs {
+  width: fit-content;
+  margin-top: 12px;
+}
+
+.preference-mode-tabs .segment-button {
+  min-width: 88px;
+}
+
 .advanced-preference-columns {
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
   margin-top: 12px;
+}
+
+.advanced-preference-columns > [hidden] {
+  display: none !important;
 }
 
 .advanced-preferences .option-group {

@@ -10,7 +10,7 @@
       }
     </script>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css?v=20260716-company-progressive" />
+    <link rel="stylesheet" href="/styles.css?v=20260716-entry-level" />
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
   <body>
@@ -825,12 +825,16 @@
                 </div>
                 <details class="custom-option advanced-preferences">
                   <summary>高级标签偏好</summary>
+                  <div class="segment preference-mode-tabs" role="group" aria-label="高级标签偏好类型">
+                    <button class="segment-button active" type="button" data-preference-panel="preferred" aria-pressed="true">优先看</button>
+                    <button class="segment-button" type="button" data-preference-panel="muted" aria-pressed="false">少看</button>
+                  </div>
                   <div class="advanced-preference-columns">
-                    <div class="option-field">
+                    <div class="option-field" data-preference-pane="preferred">
                       <span class="option-label">优先提升这些机会</span>
                       <div id="contextPreferredTagOptions" class="grouped-option-grid compact" role="group" aria-label="我想优先看的标签"></div>
                     </div>
-                    <div class="option-field">
+                    <div class="option-field" data-preference-pane="muted" hidden>
                       <span class="option-label">降低这些机会的排序</span>
                       <div id="contextMutedTagOptions" class="grouped-option-grid compact muted" role="group" aria-label="我想少看的标签"></div>
                     </div>
@@ -939,6 +943,6 @@
       </div>
     </dialog>
 
-    <script src="/app.js?v=20260716-scan-trust"></script>
+    <script src="/app.js?v=20260716-entry-level"></script>
   </body>
 </html>

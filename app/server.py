@@ -1435,6 +1435,7 @@ LANGUAGE_PREFERENCE_OPTIONS = [
 USER_JOB_TAG_OPTIONS = [
     {"value": "internship", "label": "实习", "category": "岗位类型"},
     {"value": "graduate", "label": "Graduate", "category": "岗位类型"},
+    {"value": "entry_level", "label": "应届 / 入门", "category": "岗位类型"},
     {"value": "full_time", "label": "正式工", "category": "岗位类型"},
     {"value": "contract", "label": "合同/兼职", "category": "岗位类型"},
     {"value": "conversion_strong", "label": "明确可转正", "category": "留新路径"},
@@ -4154,6 +4155,35 @@ def career_fit() -> dict:
     }
 
 
+ENTRY_LEVEL_CUE_PATTERN = re.compile(
+    r"\b(entry[-\s]?level|fresh graduates?|new grads?|graduate role|no prior experience|"
+    r"no experience required|0\s*(?:-|to)\s*2\s*(?:years?|yrs?)|1\s*(?:-|to)\s*2\s*(?:years?|yrs?))\b",
+    re.I,
+)
+
+
+def has_high_experience_requirement(text: str) -> bool:
+    lowered = clean_text(text).lower().replace("–", "-").replace("—", "-")
+    if ENTRY_LEVEL_CUE_PATTERN.search(lowered):
+        lowered = re.sub(r"\b0\s*(?:-|to)\s*3\s*(?:years?|yrs?)\b", " entry range ", lowered)
+        lowered = re.sub(r"\b(?:up to|less than)\s+3\s*(?:years?|yrs?)\b", " entry range ", lowered)
+    return bool(re.search(r"\b([3-9]|\d{2,})\+?\s*(years?|yrs?)\b", lowered))
+
+
+def entry_level_profile_for_job(job: dict) -> dict:
+    text = "\n".join(clean_text(job.get(field) or "") for field in ("position", "job_type", "jd_text", "source"))
+    lowered = text.lower().replace("–", "-").replace("—", "-")
+    if not ENTRY_LEVEL_CUE_PATTERN.search(lowered) or has_high_experience_requirement(lowered):
+        return {"is_entry_level": False, "label": "", "evidence": ""}
+    if re.search(r"\b(?:0|1)\s*(?:-|to)\s*2\s*(?:years?|yrs?)\b|\bno prior experience\b", lowered):
+        label = "0-2 年入门"
+    else:
+        label = "应届友好"
+    source = clean_text(job.get("source") or "")
+    evidence = f"{source or '岗位来源'}标记为 Entry-level，并明确接受应届或低年限候选人。"
+    return {"is_entry_level": True, "label": label, "evidence": evidence}
+
+
 def hard_flag_patterns(text: str) -> list[str]:
     flags: list[str] = []
     lowered = text.lower()
@@ -4164,11 +4194,12 @@ def hard_flag_patterns(text: str) -> list[str]:
         ),
         ("local_only", r"\b(local candidates? only|locals? only|only singaporeans)\b"),
         ("clearance_required", r"\b(security clearance|government clearance|clearance required)\b"),
-        ("experience_too_high", r"\b([3-9]|\d{2,})\+?\s*(years?|yrs?)\b"),
     ]
     for flag, pattern in checks:
         if re.search(pattern, lowered):
             flags.append(flag)
+    if has_high_experience_requirement(lowered):
+        flags.append("experience_too_high")
     if re.search(r"\b(work authorization|work authorisation|visa sponsorship|sponsorship)\b", lowered):
         flags.append("visa_unclear")
     if re.search(r"\b(captcha|login required|answer the following questions)\b", lowered):
@@ -4182,7 +4213,7 @@ def detect_employment_type(position: str, jd_text: str = "", job_type: str = "")
     jd_lower = (jd_text or "").lower()
     text = f"{title}\n{type_text}\n{jd_lower}"
     senior_title = re.search(r"\b(principal|lead|senior|staff|manager|director|head)\b", title)
-    high_experience = re.search(r"\b([3-9]|\d{2,})\+?\s*(years?|yrs?)\b", jd_lower)
+    high_experience = has_high_experience_requirement(jd_lower)
 
     if re.search(r"\b(intern|internship)\b|实习|實習", title):
         return "Internship"
@@ -9687,6 +9718,7 @@ def employment_preference_for_job(job: dict, context: dict) -> dict:
     priority = context.get("employment_priority") or "unspecified"
     employment_type = job.get("employment_type") or "Unknown"
     flags = set(job.get("eligibility_flags") or [])
+    entry_level = entry_level_profile_for_job(job)["is_entry_level"]
     boost = 0.0
     label = ""
     if priority == "internship":
@@ -9695,7 +9727,7 @@ def employment_preference_for_job(job: dict, context: dict) -> dict:
         elif employment_type == "Graduate":
             boost, label = 0.12, "Graduate 可考虑"
         elif employment_type == "Full-time":
-            boost, label = -0.08, "正式工次优先"
+            boost, label = (0.02, "入门正式岗补充") if entry_level else (-0.08, "正式工次优先")
     elif priority == "full_time":
         if employment_type == "Full-time":
             boost, label = 0.24, "正式工优先"
@@ -9704,7 +9736,9 @@ def employment_preference_for_job(job: dict, context: dict) -> dict:
         elif employment_type == "Internship":
             boost, label = -0.08, "实习次优先"
     elif priority == "both" and employment_type in {"Internship", "Graduate", "Full-time"}:
-        boost, label = 0.08, "类型匹配"
+        boost, label = (0.12, "入门岗位") if entry_level else (0.08, "类型匹配")
+    elif priority == "unspecified" and entry_level and employment_type in {"Graduate", "Full-time"}:
+        boost, label = 0.08, "入门岗位"
     if "experience_too_high" in flags and priority in {"internship", "both", "unspecified"}:
         boost -= 0.35
         label = "年限偏高"
@@ -9948,6 +9982,8 @@ def job_tag_ids_for_preferences(
     }
     if employment in employment_map:
         tags.add(employment_map[employment])
+    if entry_level_profile_for_job(job)["is_entry_level"]:
+        tags.add("entry_level")
 
     conversion = job.get("conversion_signal") or ("strong" if job.get("conversion_opportunity") else "unknown")
     if conversion == "strong":
@@ -10043,6 +10079,7 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
     company_profile = company_profile or company_catalog_match_for_job(job.get("company") or "", region) or {}
     company_group = company_profile.get("company_group") or "other"
     company_visa_possible = company_profile.get("sponsorship_signal") == "possible" and visa != "unlikely"
+    entry_level = entry_level_profile_for_job(job)
     base_pathway = float(job.get("pathway_score") or 0)
     if not base_pathway:
         base_pathway = pathway_score_from_signals(job.get("employment_type") or "Unknown", conversion, visa, language, company_profile)
@@ -10076,6 +10113,8 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
             adjustment -= 0.04
     if company_group in set(context.get("preferred_company_groups") or []):
         adjustment += 0.1
+    if entry_level["is_entry_level"] and job.get("employment_type") in {"Graduate", "Full-time"}:
+        adjustment += 0.08
     public_sector_caution = (
         region == "SG"
         and "careers@gov" in clean_text(job.get("source") or "").lower()
@@ -10109,6 +10148,8 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         tags.append("AI/初创")
     elif company_group == "sg_anchor":
         tags.append("本地大厂")
+    if entry_level["is_entry_level"]:
+        tags.append(entry_level["label"])
     if public_sector_caution:
         tags.append("公共部门 · 工签需重点确认")
         questions.append("投递前确认：该岗位是否接受当前学生身份，以及转正后是否支持工作准证？")
@@ -10118,6 +10159,8 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         evidence.append("来源为 Careers@Gov，岗位未明确提供外籍留用或工作准证支持证据。")
     if company_profile.get("recommend_reason"):
         evidence.append(f"公司理由: {company_profile['recommend_reason']}")
+    if entry_level["evidence"]:
+        evidence.append(entry_level["evidence"])
     if not evidence:
         evidence.append("暂无明确转正/工签证据，请打开原 JD 人工确认。")
     return {
@@ -10130,6 +10173,8 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         "visa_sponsorship_label": visa_signal_label(visa),
         "language_signal_label": language_signal_label(language),
         "company_group": company_group,
+        "entry_level_signal": bool(entry_level["is_entry_level"]),
+        "entry_level_label": entry_level["label"],
         "pathway_priority_risk": "public_sector_sponsorship" if public_sector_caution and context.get("sponsorship_priority") == "high" else "",
     }
 
@@ -10247,6 +10292,8 @@ def rank_job_with_preferences(
         out["fit_reasons"].append("留新加坡路径: " + "、".join(out["pathway_tags"][:4]))
     if out.get("pathway_candidate") and out.get("base_score", 0) < 3.0:
         out["fit_reasons"].append("留新路径补充候选")
+    if out.get("entry_level_signal"):
+        out["fit_reasons"].append("入门岗位")
     if out["company_boost"]:
         out["fit_reasons"].append("Watched company")
     if out.get("employment_fit_label"):

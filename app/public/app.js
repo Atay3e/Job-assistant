@@ -3291,6 +3291,20 @@ function handleOptionChip(event) {
   renderUserContextControls();
 }
 
+
+function setAdvancedPreferencePanel(panel) {
+  const activePanel = panel === "muted" ? "muted" : "preferred";
+  document.querySelectorAll("[data-preference-panel]").forEach((button) => {
+    const active = button.dataset.preferencePanel === activePanel;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.querySelectorAll("[data-preference-pane]").forEach((pane) => {
+    pane.hidden = pane.dataset.preferencePane !== activePanel;
+  });
+}
+
+
 function syncSalaryPeriodControls(scope) {
   const form = document.getElementById(scope === "onboarding" ? "onboardingForm" : "contextForm");
   const periodSelect = document.getElementById(scope === "onboarding" ? "onboardingSalaryPeriod" : "contextSalaryPeriod");
@@ -3333,6 +3347,9 @@ function bindEvents() {
   });
   document.getElementById("contextSalaryPeriod").addEventListener("change", () => syncSalaryPeriodControls("context"));
   document.getElementById("onboardingSalaryPeriod").addEventListener("change", () => syncSalaryPeriodControls("onboarding"));
+  document.querySelectorAll("[data-preference-panel]").forEach((button) => {
+    button.addEventListener("click", () => setAdvancedPreferencePanel(button.dataset.preferencePanel));
+  });
   document.getElementById("scanBtn").addEventListener("click", scanJobs);
   document.getElementById("scanBtnCompact")?.addEventListener("click", scanJobs);
   document.getElementById("reportBtn").addEventListener("click", makeReport);

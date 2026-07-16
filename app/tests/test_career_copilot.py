@@ -1766,6 +1766,63 @@ class ParserTests(unittest.TestCase):
         self.assertIn("visa_unlikely", risk_tags)
         self.assertNotIn("visa_possible", risk_tags)
 
+    def test_entry_level_range_does_not_trigger_high_experience_risk(self):
+        entry_text = (
+            "Entry-level role. Fresh graduates are welcome. "
+            "Candidates with 0-3 years of relevant experience may apply."
+        )
+
+        self.assertNotIn("experience_too_high", server.hard_flag_patterns(entry_text))
+        self.assertIn(
+            "experience_too_high",
+            server.hard_flag_patterns("A minimum of 3+ years of product experience is required."),
+        )
+
+    def test_entry_level_signal_is_visible_in_pathway_tags_and_reason(self):
+        job = {
+            "company": "Deep Tech Example",
+            "position": "AI Product Associate",
+            "source": "SGInnovate Deep Tech",
+            "region": "SG",
+            "location": "Singapore",
+            "job_type": "Full-time · Entry-level · 1-2 years",
+            "employment_type": "Full-time",
+            "jd_text": "Fresh graduates welcome. Entry-level requirement: 1-2 years.",
+            "score": 3.4,
+            "eligibility_flags": [],
+            "conversion_signal": "unknown",
+            "visa_sponsorship_signal": "unknown",
+            "language_signal": "unknown",
+            "pathway_score": 2.8,
+        }
+        context = {
+            "career_goal": "sg_internship_to_fulltime",
+            "employment_priority": "both",
+            "conversion_priority": "high",
+            "sponsorship_priority": "high",
+            "language_preference": "unspecified",
+            "preferred_company_groups": [],
+            "preferred_job_tags": [],
+            "muted_job_tags": [],
+        }
+
+        ranked = server.rank_job_with_preferences(job, [], {}, region="SG", context=context)
+
+        self.assertIn("0-2 年入门", ranked["pathway_tags"])
+        self.assertIn("入门岗位", ranked["recommendation_reason"])
+        self.assertGreater(ranked["score_breakdown"]["employment"], 0)
+        self.assertIn("entry_level", server.job_tag_ids_for_preferences(job, "SG"))
+
+        contradictory = {
+            **job,
+            "jd_text": "Entry-level requirement: 1-2 years. A minimum of 3-6 years is required.",
+            "eligibility_flags": ["experience_too_high"],
+        }
+        contradictory_ranked = server.rank_job_with_preferences(contradictory, [], {}, region="SG", context=context)
+        self.assertNotIn("0-2 年入门", contradictory_ranked["pathway_tags"])
+        self.assertNotIn("entry_level", server.job_tag_ids_for_preferences(contradictory, "SG"))
+        self.assertIn("年限偏高", contradictory_ranked["recommendation_reason"])
+
     def test_company_jsonld_and_greenhouse_jobs_parse(self):
         html = """
         <script type="application/ld+json">
@@ -5053,6 +5110,15 @@ class FrontendUxContractTests(unittest.TestCase):
         self.assertGreaterEqual(app_js.count('setAttribute("aria-pressed", String(active))'), 4)
         self.assertIn('data-today-bucket="today_new" aria-pressed="true"', index_html)
         self.assertIn('data-jobs-panel="recommendations" aria-pressed="true"', index_html)
+
+    def test_advanced_tag_preferences_show_one_mode_at_a_time(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+        index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('data-preference-panel="preferred" aria-pressed="true"', index_html)
+        self.assertIn('data-preference-pane="muted" hidden', index_html)
+        self.assertIn("function setAdvancedPreferencePanel(panel)", app_js)
+        self.assertIn('document.querySelectorAll("[data-preference-panel]")', app_js)
 
 
 class ApplyAssistTests(TempAppMixin, unittest.TestCase):
