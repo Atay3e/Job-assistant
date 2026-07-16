@@ -1866,6 +1866,61 @@ class ParserTests(unittest.TestCase):
         self.assertIn("visa_unlikely", risk_tags)
         self.assertNotIn("visa_possible", risk_tags)
 
+    def test_visa_detection_requires_explicit_support_and_catches_indirect_restrictions(self):
+        unlikely_phrases = [
+            "Applicants must have a current right to work in Singapore and do not require company sponsorship of a visa.",
+            "We will only consider candidates who do not require visa sponsorship upon graduation.",
+            "You must be able to work legally in Singapore without Riot Games' sponsorship.",
+            "Must-Haves: Singaporean / PR.",
+            "Eligibility criteria: Singapore Citizen or Permanent Resident.",
+        ]
+        for text in unlikely_phrases:
+            with self.subTest(text=text):
+                self.assertEqual(server.detect_visa_sponsorship_signal("Product Intern", text, "Internship", "SG")[0], "unlikely")
+
+        self.assertEqual(
+            server.detect_visa_sponsorship_signal(
+                "Product Intern",
+                "Available for Work Visa Sponsorship",
+                "Internship",
+                "SG",
+            )[0],
+            "unclear",
+        )
+        self.assertEqual(
+            server.detect_visa_sponsorship_signal(
+                "Engineering Intern",
+                "Candidate must comply with export laws without sponsorship for an export license.",
+                "Internship",
+                "SG",
+            )[0],
+            "unknown",
+        )
+        self.assertEqual(
+            server.detect_visa_sponsorship_signal(
+                "Partnerships Intern",
+                "Assist in preparation of sponsorship decks and packages; support planning of brand activations.",
+                "Internship",
+                "SG",
+            )[0],
+            "unknown",
+        )
+        self.assertEqual(
+            server.detect_visa_sponsorship_signal(
+                "AI Product Intern",
+                "The company will provide Employment Pass sponsorship for successful full-time conversions.",
+                "Internship",
+                "SG",
+            )[0],
+            "possible",
+        )
+
+        self.assertIn("citizen_or_pr_only", server.hard_flag_patterns("Must-Haves: Singaporean / PR."))
+        self.assertNotIn(
+            "citizen_or_pr_only",
+            server.hard_flag_patterns("We build public services that improve the lives of Singapore citizens."),
+        )
+
     def test_entry_level_range_does_not_trigger_high_experience_risk(self):
         entry_text = (
             "Entry-level role. Fresh graduates are welcome. "
@@ -3213,6 +3268,28 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
 
 
 class RecommendationTests(TempAppMixin, unittest.TestCase):
+    def test_legacy_work_authorisation_signals_are_repaired(self):
+        job = server.upsert_job(
+            {
+                "company": "Global Capital Example",
+                "position": "Investment Intern",
+                "source": "LinkedIn",
+                "url": "https://example.com/no-sponsorship-intern",
+                "jd_text": "We will only consider candidates who do not require visa sponsorship upon graduation.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set visa_sponsorship_signal='possible', eligibility_flags='[]' where id=?",
+                (job["id"],),
+            )
+            repaired = server.repair_legacy_work_authorisation_signals(conn)
+
+        repaired_job = server.get_job(job["id"])
+        self.assertEqual(repaired, 1)
+        self.assertEqual(repaired_job["visa_sponsorship_signal"], "unlikely")
+        self.assertNotIn("visa_unclear", repaired_job["eligibility_flags"])
+
     def test_legacy_company_history_experience_flag_is_repaired(self):
         job = server.upsert_job(
             {

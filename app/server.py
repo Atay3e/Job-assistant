@@ -2667,6 +2667,7 @@ def setup_db() -> None:
                 seed_default_watch_companies(conn)
                 backfill_job_metadata(conn)
                 repair_legacy_experience_flags(conn)
+                repair_legacy_work_authorisation_signals(conn)
                 backfill_application_deadlines(conn)
         INITIALIZED_DB_PATHS.add(str(db_path))
 
@@ -4223,7 +4224,14 @@ def hard_flag_patterns(text: str) -> list[str]:
     checks = [
         (
             "citizen_or_pr_only",
-            r"\b(singaporeans?\s+only|singapore\s+citizens?\s+only|pr\s+only|permanent\s+residents?\s+only|only\s+(singaporeans?|singapore\s+citizens?|prs?|permanent\s+residents?)|must\s+be\s+(a\s+)?(singaporean|singapore\s+citizen|pr|permanent\s+resident)|requires?\s+(singaporean|singapore\s+citizen|pr\s+status|permanent\s+resident))\b",
+            r"\b(singaporeans?\s+only|singapore\s+citizens?\s+only|pr\s+only|permanent\s+residents?\s+only|"
+            r"only\s+(singaporeans?|singapore\s+citizens?|prs?|permanent\s+residents?)|"
+            r"must\s+be\s+(a\s+)?(singaporean|singapore\s+citizen|pr|permanent\s+resident)|"
+            r"requires?\s+(singaporean|singapore\s+citizen|pr\s+status|permanent\s+resident)|"
+            r"open\s+to\s+singaporeans?\s+(?:and|or|/)\s+(?:singapore\s+)?prs?\s+only|"
+            r"(?:must[-\s]?haves?|eligibility\s+criteria|requirements?)[^.;\n]{0,100}"
+            r"(?:singaporeans?|singapore\s+citizens?)\s*(?:and|or|/)\s*"
+            r"(?:singapore\s+)?(?:prs?|permanent\s+residents?))\b",
         ),
         ("local_only", r"\b(local candidates? only|locals? only|only singaporeans)\b"),
         ("clearance_required", r"\b(security clearance|government clearance|clearance required)\b"),
@@ -4233,7 +4241,7 @@ def hard_flag_patterns(text: str) -> list[str]:
             flags.append(flag)
     if has_high_experience_requirement(lowered):
         flags.append("experience_too_high")
-    if re.search(r"\b(work authorization|work authorisation|visa sponsorship|sponsorship)\b", lowered):
+    if detect_visa_sponsorship_signal("", lowered, "", "SG")[0] == "unclear":
         flags.append("visa_unclear")
     if re.search(r"\b(captcha|login required|answer the following questions)\b", lowered):
         flags.append("custom_questions")
@@ -4361,7 +4369,23 @@ def detect_conversion_signal(position: str, jd_text: str = "", job_type: str = "
 
 def detect_visa_sponsorship_signal(position: str, jd_text: str = "", job_type: str = "", region: str | None = None) -> tuple[str, list[str]]:
     text = f"{position}\n{job_type}\n{jd_text}".lower()
+    text = re.sub(
+        r"[^.。\n]{0,100}\bexport\s+laws?\b[^.。\n]{0,160}\bsponsorship\b[^.。\n]{0,100}\bexport\s+licen[cs]e\b[^.。\n]*",
+        " ",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\b(?:brand\s+|event\s+|commercial\s+)?sponsorships?\s+"
+        r"(?:and\s+partnerships?|activation(?:s|\s+ideas?)?|decks?|packages?|proposals?|requests?|opportunities?)\b",
+        " ",
+        text,
+        flags=re.I,
+    )
     negative_patterns = [
+        r"\b(?:do(?:es)?\s+not|will\s+not|cannot|can't|won't)\s+(?:require|need)[^.。\n]{0,70}\b(?:visa\s+)?sponsorship\b[^.。\n]*",
+        r"\b(?:only\s+consider|considering|prioriti[sz](?:e|ing))[^.。\n]{0,100}\b(?:do(?:es)?\s+not|without)\b[^.。\n]{0,70}\b(?:visa\s+)?sponsorship\b[^.。\n]*",
+        r"\b(?:work|work\s+legally|authori[sz]ed\s+to\s+work)[^.。\n]{0,70}\bwithout\b[^.。\n]{0,70}\bsponsorship\b[^.。\n]*",
         r"\b(no|not|without)\s+(visa|work\s+pass|work\s+permit|employment\s+pass|s\s+pass|sponsorship)[^.。\n]*",
         r"\b(no|not|without)\s+(sponsorship|sponsor)[^.。\n]*",
         r"\b(visa|work\s+pass|work\s+permit|employment\s+pass|s\s+pass)\s+sponsorship\s+(?:is\s+)?(?:not|unavailable)[^.。\n]*",
@@ -4369,13 +4393,21 @@ def detect_visa_sponsorship_signal(position: str, jd_text: str = "", job_type: s
         r"\b(?:must|need(?:s)?\s+to)\s+(?:already\s+)?(?:have|hold)[^.。\n]*(?:right\s+to\s+work|valid\s+work\s+authori[sz]ation)[^.。\n]*",
         r"\b(singaporeans?\s+only|singapore\s+citizens?\s+only|pr\s+only|permanent\s+residents?\s+only)[^.。\n]*",
         r"\bmust\s+be\s+(a\s+)?(singaporean|singapore\s+citizen|pr|permanent\s+resident)[^.。\n]*",
+        r"\bopen\s+to\s+singaporeans?\s+(?:and|or|/)\s+(?:singapore\s+)?prs?\s+only[^.。\n]*",
+        r"\b(?:must[-\s]?haves?|eligibility\s+criteria|requirements?)[^.。\n]{0,100}"
+        r"(?:singaporeans?|singapore\s+citizens?)\s*(?:and|or|/)\s*"
+        r"(?:singapore\s+)?(?:prs?|permanent\s+residents?)[^.。\n]*",
     ]
     positive_patterns = [
-        r"\b(visa|work\s+pass|work\s+permit|employment\s+pass|ep|s\s+pass)\s+(sponsor|sponsorship|support|provided|available)[^.。\n]*",
-        r"\b(sponsor|sponsorship|support)\s+(visa|work\s+pass|work\s+permit|employment\s+pass|ep|s\s+pass)[^.。\n]*",
+        r"\b(?:visa|work\s+pass|work\s+permit|employment\s+pass|ep|s\s+pass)\s+sponsorship\s+"
+        r"(?:support|is\s+available|will\s+be\s+provided|provided|offered)[^.。\n]*",
+        r"\b(?:we|the\s+company|the\s+employer|employer)\s+(?:can|will|may)\s+"
+        r"(?:provide|offer|support|sponsor)[^.。\n]{0,50}"
+        r"(?:visa|work\s+pass|work\s+permit|employment\s+pass|ep|s\s+pass)[^.。\n]*",
+        r"\b(?:sponsorship|work\s+authori[sz]ation\s+support)\s+(?:is|will\s+be|may\s+be)\s+"
+        r"(?:available|provided|offered)[^.。\n]*",
         r"\bopen\s+to\s+(international|foreign)\s+(candidates|students|applicants)[^.。\n]*",
-        r"\bwork\s+authori[sz]ation\s+(support|sponsorship)[^.。\n]*",
-        r"(工签|工作准证|就业准证|EP|S Pass).{0,40}(支持|担保|可办|sponsor)",
+        r"(?:工签|工作准证|就业准证|\bep\b|\bs\s+pass\b).{0,40}(支持|担保|可办|sponsor)",
     ]
     negative = detection_evidence(text, negative_patterns, "工签风险")
     if negative:
@@ -4386,6 +4418,54 @@ def detect_visa_sponsorship_signal(position: str, jd_text: str = "", job_type: s
     if re.search(r"\b(work authorization|work authorisation|visa sponsorship|sponsorship|employment pass|s pass)\b", text):
         return "unclear", detection_evidence(text, [r"\b(work authorization|work authorisation|visa sponsorship|sponsorship|employment pass|s pass)[^.。\n]*"], "工签待确认", 1)
     return "unknown", []
+
+
+def repair_legacy_work_authorisation_signals(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        select id, company, position, source, job_type, jd_text, region,
+               eligibility_flags, visa_sponsorship_signal
+        from jobs
+        where lower(jd_text) like '%sponsor%'
+           or lower(jd_text) like '%right to work%'
+           or lower(jd_text) like '%work authorization%'
+           or lower(jd_text) like '%work authorisation%'
+           or lower(jd_text) like '%singaporean%'
+           or lower(jd_text) like '%singapore citizen%'
+           or lower(jd_text) like '%permanent resident%'
+        """
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        metadata = job_metadata(
+            row["position"] or "",
+            row["jd_text"] or "",
+            row["job_type"] or "",
+            row["region"] or "SG",
+            row["company"] or "",
+            row["source"] or "",
+        )
+        combined = "\n".join(clean_text(row[key] or "") for key in ["company", "position", "source", "job_type", "jd_text"])
+        flags = hard_flag_patterns(combined)
+        if metadata["visa_sponsorship_signal"] == (row["visa_sponsorship_signal"] or "unknown") and flags == json_list(row["eligibility_flags"]):
+            continue
+        conn.execute(
+            """
+            update jobs set visa_sponsorship_signal=?, eligibility_flags=?, pathway_score=?,
+                            pathway_evidence_json=?, updated_at=?
+            where id=?
+            """,
+            (
+                metadata["visa_sponsorship_signal"],
+                json.dumps(flags, ensure_ascii=False),
+                metadata["pathway_score"],
+                json.dumps(metadata["pathway_evidence_json"], ensure_ascii=False),
+                now_iso(),
+                row["id"],
+            ),
+        )
+        repaired += 1
+    return repaired
 
 
 def detect_language_signal(position: str, jd_text: str = "", job_type: str = "", company: str = "") -> tuple[str, list[str]]:
