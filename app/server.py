@@ -1321,6 +1321,7 @@ SOURCE_LIMITS = {
     "Company Site": 80,
     "Google Jobs": 24,
     "MyCareersFuture": 18,
+    "Prosple": 24,
     "Careers@Gov": 30,
     "Internship.sg": 24,
     "Cultjobs": 18,
@@ -1464,6 +1465,7 @@ USER_JOB_TAG_OPTIONS = [
     {"value": "source_jobstreet", "label": "JobStreet", "category": "来源"},
     {"value": "source_indeed", "label": "Indeed", "category": "来源"},
     {"value": "source_mycareersfuture", "label": "MyCareersFuture", "category": "来源"},
+    {"value": "source_prosple", "label": "Prosple 学生岗位", "category": "来源"},
     {"value": "source_cultjobs", "label": "Cultjobs 创意岗位", "category": "来源"},
     {"value": "source_startup", "label": "创业与 AI 机会", "category": "来源"},
     {"value": "source_google_jobs", "label": "Google Jobs", "category": "来源"},
@@ -1544,6 +1546,7 @@ SCAN_SOURCE_MODES = {
     "LinkedIn（含 AI 关键词）": "primary",
     "InternSG（含 AI 关键词）": "primary",
     "MyCareersFuture": "supplemental",
+    "Prosple": "primary",
     "Careers@Gov": "primary",
     "Internship.sg": "supplemental",
     "Cultjobs": "primary",
@@ -6922,6 +6925,132 @@ def fetch_mycareersfuture_jobs(limit: int, region: str | None = None) -> tuple[l
     return jobs, failures
 
 
+def parse_prosple_jobs_from_html(html: str, limit: int) -> list[dict]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return []
+    soup = BeautifulSoup(html or "", "html.parser")
+    state_node = soup.select_one("#__NEXT_DATA__")
+    if not state_node:
+        return []
+    try:
+        payload = json.loads(state_node.string or state_node.get_text() or "{}")
+        entities = payload["props"]["apolloState"]["data"]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return []
+
+    def referenced_label(value: dict | None) -> str:
+        reference = (value or {}).get("__ref")
+        entity = entities.get(reference, {}) if reference else (value or {})
+        return clean_text(entity.get("label") or "")
+
+    def salary_text_for(opportunity: dict) -> str:
+        salary = opportunity.get("salary") or {}
+        currency = referenced_label(salary.get("currency")) or "SGD"
+        rate = clean_text(salary.get("rate") or "").lower()
+        rate_label = {
+            "monthly": "per month",
+            "yearly": "per year",
+            "annual": "per year",
+            "daily": "per day",
+            "hourly": "per hour",
+        }.get(rate, rate)
+        values: list[float] = []
+        if salary.get("value") is not None:
+            values = [salary.get("value")]
+        elif salary.get("range"):
+            values = [salary["range"].get("minimum"), salary["range"].get("maximum")]
+        try:
+            amounts = [float(value) for value in values if value is not None]
+        except (TypeError, ValueError):
+            return ""
+        if not amounts or (rate == "monthly" and (min(amounts) < 100 or max(amounts) < 500)):
+            return ""
+        formatted = " - ".join(f"{amount:,.0f}" for amount in amounts)
+        return f"{currency} {formatted}{f' {rate_label}' if rate_label else ''}".strip()
+
+    jobs: list[dict] = []
+    for key, opportunity in entities.items():
+        if len(jobs) >= limit:
+            break
+        if not key.startswith("Opportunity:") or not isinstance(opportunity, dict):
+            continue
+        if opportunity.get("expired") or opportunity.get("applicationsOpen") is False:
+            continue
+        position = clean_text(opportunity.get("title") or "")
+        type_labels = [referenced_label(value) for value in opportunity.get("opportunityTypes") or []]
+        employment_text = clean_text(" ".join([position, *type_labels])).lower()
+        if "intern" in employment_text or "clerkship" in employment_text or "placement" in employment_text:
+            employment_type = "Internship"
+        elif any(term in employment_text for term in ["graduate", "apprentice", "trainee"]):
+            employment_type = "Graduate"
+        else:
+            continue
+        employer_ref = (opportunity.get("parentEmployer") or {}).get("__ref")
+        employer = entities.get(employer_ref, {}) if employer_ref else {}
+        company = clean_text(employer.get("title") or employer.get("advertiserName") or "")
+        if not is_actionable_job_title(position) or not is_actionable_company_name(company, position):
+            continue
+        locations = [clean_text(value.get("label") or "") for value in opportunity.get("geoAddresses") or []]
+        locations = [value for value in locations if value]
+        if locations and not any("singapore" in value.lower() for value in locations):
+            continue
+        detail_path = clean_text(opportunity.get("detailPageURL") or "")
+        url = absolute_url("https://sg.prosple.com", detail_path)
+        if not detail_path or not url.startswith("https://sg.prosple.com/"):
+            continue
+        fields: list[str] = []
+        for group in opportunity.get("studyFields") or []:
+            fields.append(clean_text(group.get("label") or ""))
+            fields.extend(clean_text(item.get("label") or "") for item in group.get("children") or [])
+        fields = list(dict.fromkeys(value for value in fields if value))[:12]
+        salary_text = salary_text_for(opportunity)
+        closing_text = ""
+        try:
+            closing = dt.datetime.fromisoformat(str(opportunity.get("applicationsCloseDate") or "").replace("Z", "+00:00"))
+            closing_text = closing.strftime("%d %B %Y")
+        except ValueError:
+            pass
+        overview = clean_text((opportunity.get("overview") or {}).get("summary") or "")
+        evidence = [
+            overview,
+            f"Study fields: {', '.join(fields)}" if fields else "",
+            f"Salary: {salary_text}" if salary_text else "",
+            f"Closing date: {closing_text}" if closing_text else "",
+            "Prosple Singapore student and graduate opportunity.",
+        ]
+        jobs.append({
+            "company": company,
+            "position": position[:180],
+            "source": "Prosple",
+            "url": url,
+            "external_job_id": clean_text(opportunity.get("id") or key.partition(":")[2]),
+            "location": " · ".join(locations) or "Singapore",
+            "region": "SG",
+            "city": "Singapore",
+            "source_region": "SG",
+            "job_type": " · ".join(type_labels) or employment_type,
+            "employment_type": employment_type,
+            "salary_text": salary_text,
+            "jd_text": "\n".join(value for value in evidence if value)[:12000],
+        })
+    return jobs
+
+
+def fetch_prosple_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    if active_region_code(region) != "SG":
+        return [], []
+    try:
+        html = http_get("https://sg.prosple.com/internships-singapore", timeout=15, retries=0)
+    except Exception as exc:
+        return [], [f"Prosple internships: {exc}"]
+    jobs = parse_prosple_jobs_from_html(html, limit)
+    if not jobs:
+        return [], ["Prosple limited: public page contains no open Singapore internship cards."]
+    return jobs, []
+
+
 CAREERS_GOV_QUERIES = [
     "product intern",
     "design intern",
@@ -7434,6 +7563,7 @@ def scan_source_definitions(region: str | None = None) -> list[tuple[str, object
             ("InternSG（含 AI 关键词）", fetch_internsg_jobs_with_ai, SOURCE_LIMITS["InternSG"] + SOURCE_LIMITS["InternSG AI"]),
             ("Cultjobs", lambda limit: fetch_cultjobs_jobs(limit, code), SOURCE_LIMITS["Cultjobs"]),
             ("MyCareersFuture", lambda limit: fetch_mycareersfuture_jobs(limit, code), SOURCE_LIMITS["MyCareersFuture"]),
+            ("Prosple", lambda limit: fetch_prosple_jobs(limit, code), SOURCE_LIMITS["Prosple"]),
             ("Careers@Gov", lambda limit: fetch_careers_gov_jobs(limit, code), SOURCE_LIMITS["Careers@Gov"]),
             ("Internship.sg", lambda limit: fetch_internship_sg_jobs(limit, code), SOURCE_LIMITS["Internship.sg"]),
             ("新加坡科技与 AI ATS", lambda limit: fetch_sg_ai_startup_ats_jobs(limit, code), SOURCE_LIMITS["AI Startup ATS"]),
@@ -9581,6 +9711,8 @@ def source_tag_for_job(source: str) -> str:
         return "source_indeed"
     if "mycareersfuture" in lowered:
         return "source_mycareersfuture"
+    if "prosple" in lowered:
+        return "source_prosple"
     if "google jobs" in lowered:
         return "source_google_jobs"
     return ""
@@ -9796,6 +9928,14 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
             adjustment -= 0.04
     if company_group in set(context.get("preferred_company_groups") or []):
         adjustment += 0.1
+    public_sector_caution = (
+        region == "SG"
+        and "careers@gov" in clean_text(job.get("source") or "").lower()
+        and visa != "possible"
+        and not company_visa_possible
+    )
+    if public_sector_caution:
+        adjustment -= 0.32 if context.get("sponsorship_priority") == "high" else 0.18
 
     if conversion in {"strong", "possible"}:
         tags.append(conversion_signal_label(conversion))
@@ -9821,8 +9961,13 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         tags.append("AI/初创")
     elif company_group == "sg_anchor":
         tags.append("本地大厂")
+    if public_sector_caution:
+        tags.append("公共部门 · 工签需重点确认")
+        questions.append("投递前确认：该岗位是否接受当前学生身份，以及转正后是否支持工作准证？")
 
     evidence = list(job.get("pathway_evidence_json") or [])[:5]
+    if public_sector_caution:
+        evidence.append("来源为 Careers@Gov，岗位未明确提供外籍留用或工作准证支持证据。")
     if company_profile.get("recommend_reason"):
         evidence.append(f"公司理由: {company_profile['recommend_reason']}")
     if not evidence:
@@ -9837,6 +9982,7 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         "visa_sponsorship_label": visa_signal_label(visa),
         "language_signal_label": language_signal_label(language),
         "company_group": company_group,
+        "pathway_priority_risk": "public_sector_sponsorship" if public_sector_caution and context.get("sponsorship_priority") == "high" else "",
     }
 
 
@@ -10160,6 +10306,7 @@ def recommendation_payload_from_ranked_jobs(
         key=lambda item: (
             not bool(item.get("user_tag_mutes")) if has_tag_preferences else True,
             not bool(item.get("direction_mismatch_adjustment")),
+            not bool(item.get("pathway_priority_risk")),
             deadline_recommendation_priority(item),
             item.get("batch_date") == current_date or item.get("recommended_date") == current_date,
             float(item.get("rank_score") or 0),

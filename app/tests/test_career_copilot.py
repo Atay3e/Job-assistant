@@ -949,6 +949,62 @@ class ParserTests(unittest.TestCase):
             "https://jobs.careers.gov.sg/jobs/hrp/17828658/005056a3-d347-1fe1-9fe7-48a69483a2ad",
         )
 
+    def test_prosple_parser_keeps_open_singapore_entry_roles_with_salary(self):
+        next_data = {
+            "props": {
+                "apolloState": {
+                    "data": {
+                        "Employer:1": {"title": "Tencent Singapore"},
+                        "Currency:27473": {"id": "27473", "label": "SGD"},
+                        "LabeledResource:2": {"id": "2", "label": "Internship, Clerkship or Placement"},
+                        "Opportunity:10": {
+                            "id": "10",
+                            "title": "AI Product Intern",
+                            "expired": False,
+                            "applicationsOpen": True,
+                            "applicationsCloseDate": "2026-08-09T15:59:00.000Z",
+                            "detailPageURL": "/graduate-employers/tencent/jobs-internships/ai-product-intern",
+                            "parentEmployer": {"__ref": "Employer:1"},
+                            "opportunityTypes": [{"__ref": "LabeledResource:2"}],
+                            "geoAddresses": [{"label": "Singapore"}],
+                            "studyFields": [{"label": "IT & Computer Science", "children": [{"label": "Data Science"}]}],
+                            "salary": {
+                                "type": "range",
+                                "range": {"minimum": 1200, "maximum": 1800},
+                                "currency": {"__ref": "Currency:27473"},
+                                "rate": "monthly",
+                            },
+                        },
+                        "Opportunity:11": {
+                            "id": "11",
+                            "title": "Expired Product Intern",
+                            "expired": True,
+                            "applicationsOpen": False,
+                            "detailPageURL": "/expired",
+                            "parentEmployer": {"__ref": "Employer:1"},
+                            "opportunityTypes": [{"__ref": "LabeledResource:2"}],
+                            "geoAddresses": [{"label": "Singapore"}],
+                        },
+                    }
+                }
+            }
+        }
+        html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script>'
+
+        jobs = server.parse_prosple_jobs_from_html(html, 10)
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["source"], "Prosple")
+        self.assertEqual(jobs[0]["company"], "Tencent Singapore")
+        self.assertEqual(jobs[0]["employment_type"], "Internship")
+        self.assertIn("SGD 1,200 - 1,800 per month", jobs[0]["jd_text"])
+        self.assertIn("Closing date: 09 August 2026", jobs[0]["jd_text"])
+
+    def test_prosple_source_is_primary_and_registered_for_singapore(self):
+        self.assertIn("Prosple", server.expected_scan_sources("SG"))
+        self.assertEqual(server.scan_source_mode("Prosple"), "primary")
+        self.assertEqual(server.source_tag_for_job("Prosple"), "source_prosple")
+
     def test_careers_gov_detail_parser_keeps_requirements_and_closing_date(self):
         html = """
         <html><body>
@@ -2934,6 +2990,69 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
 
 
 class RecommendationTests(TempAppMixin, unittest.TestCase):
+    def test_public_sector_roles_are_cautioned_when_sponsorship_is_high_priority(self):
+        context = {
+            "career_goal": "sg_internship_to_fulltime",
+            "sponsorship_priority": "high",
+            "conversion_priority": "high",
+            "language_preference": "english_ok",
+        }
+        common = {
+            "employment_type": "Internship",
+            "pathway_score": 3.0,
+            "conversion_signal": "unknown",
+            "visa_sponsorship_signal": "unknown",
+            "language_signal": "unknown",
+        }
+
+        private = server.pathway_preference_for_job({**common, "source": "InternSG"}, context, "SG", {})
+        public = server.pathway_preference_for_job({**common, "source": "Careers@Gov"}, context, "SG", {})
+
+        self.assertLessEqual(public["pathway_adjustment"], private["pathway_adjustment"] - 0.25)
+        self.assertIn("公共部门 · 工签需重点确认", public["pathway_tags"])
+        self.assertTrue(any("身份" in item for item in public["pathway_questions"]))
+        self.assertTrue(any("Careers@Gov" in item for item in public["evidence"]))
+
+    def test_explicit_sponsorship_signal_avoids_public_sector_caution(self):
+        result = server.pathway_preference_for_job(
+            {
+                "employment_type": "Internship",
+                "pathway_score": 3.5,
+                "source": "Careers@Gov",
+                "visa_sponsorship_signal": "possible",
+            },
+            {"career_goal": "sg_internship_to_fulltime", "sponsorship_priority": "high"},
+            "SG",
+            {},
+        )
+
+        self.assertNotIn("公共部门 · 工签需重点确认", result["pathway_tags"])
+
+    def test_public_sector_caution_sorts_after_private_roles_for_sponsorship_goal(self):
+        context = {"career_goal": "sg_internship_to_fulltime", "sponsorship_priority": "high"}
+        private = server.rank_job_with_preferences(
+            {"id": 1, "company": "Private Product Co", "position": "Product Intern", "source": "InternSG", "score": 4.0},
+            [],
+            {},
+            "SG",
+            set(),
+            context,
+        )
+        public = server.rank_job_with_preferences(
+            {"id": 2, "company": "Public Agency", "position": "Product Intern", "source": "Careers@Gov", "score": 5.0},
+            [],
+            {},
+            "SG",
+            set(),
+            context,
+        )
+
+        payload = server.recommendation_payload_from_ranked_jobs(
+            [public, private], "SG", 2, context, [], "user_context", []
+        )
+
+        self.assertEqual([job["id"] for job in payload["jobs"]], [1, 2])
+
     def test_decision_summary_is_plain_language_and_keeps_the_key_pathway_tradeoff(self):
         summary = server.job_decision_summary({
             "employment_type": "Internship",
