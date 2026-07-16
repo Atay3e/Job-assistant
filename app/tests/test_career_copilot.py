@@ -2071,6 +2071,57 @@ class DailyRunTests(TempAppMixin, unittest.TestCase):
 
 
 class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
+    def test_freshness_tags_use_first_discovery_instead_of_rescan_date(self):
+        older_date = (server.dt.date.today() - server.dt.timedelta(days=4)).strftime(server.DATE_FMT)
+        job = {
+            "company": "Rescanned Co",
+            "position": "Product Intern",
+            "source": "LinkedIn",
+            "found_date": older_date,
+            "batch_date": server.today(),
+            "recommended_date": server.today(),
+        }
+
+        self.assertEqual(server.freshness_tag_for_job(job), "fresh_recent")
+        self.assertNotIn("fresh_today", server.job_tag_ids_for_preferences(job, "SG"))
+
+    def test_freshness_tags_fall_back_when_first_discovery_is_missing(self):
+        job = {
+            "company": "Imported Co",
+            "position": "Product Intern",
+            "source": "LinkedIn",
+            "found_date": "",
+            "batch_date": server.today(),
+        }
+
+        self.assertEqual(server.freshness_tag_for_job(job), "fresh_today")
+
+    def test_yesterday_discovery_is_recent_not_today(self):
+        yesterday = (server.dt.date.today() - server.dt.timedelta(days=1)).strftime(server.DATE_FMT)
+
+        self.assertEqual(server.freshness_tag_for_job({"found_date": yesterday}), "fresh_recent")
+
+    def test_lean_workbench_omits_duplicated_compatibility_recommendations(self):
+        job = server.upsert_job(
+            {
+                "region": "SG",
+                "company": "Lean Payload Co",
+                "position": "Product Design Intern",
+                "source": "InternSG",
+                "url": "https://example.com/lean-workbench",
+                "jd_text": "Singapore product design internship.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute("update jobs set score=4.8, status='Recommended' where id=?", (job["id"],))
+
+        regular = server.workbench_payload({"region": ["SG"]})
+        lean = server.workbench_payload({"region": ["SG"], "lean": ["1"]})
+
+        self.assertTrue(regular["top_recommendations"])
+        self.assertEqual(lean["top_recommendations"], [])
+        self.assertTrue(lean["today_new_recommendations"])
+
     def test_workbench_action_titles_stay_compact_for_mobile_cards(self):
         actions = server.workbench_actions(
             {},

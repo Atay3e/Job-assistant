@@ -9587,19 +9587,10 @@ def source_tag_for_job(source: str) -> str:
 
 
 def freshness_tag_for_job(job: dict) -> str:
-    dates = [job.get("found_date"), job.get("batch_date"), job.get("recommended_date"), job.get("applied_date")]
-    parsed: list[dt.date] = []
-    for value in dates:
-        if not value:
-            continue
-        try:
-            parsed.append(dt.datetime.strptime(str(value)[:10], DATE_FMT).date())
-        except ValueError:
-            continue
-    if not parsed:
+    age_days = job_discovery_age_days(job)
+    if age_days is None:
         return ""
-    age_days = max(0, (dt.date.today() - max(parsed)).days)
-    if age_days <= 1:
+    if age_days == 0:
         return "fresh_today"
     if age_days <= 7:
         return "fresh_recent"
@@ -10624,6 +10615,7 @@ def workbench_recommendation_bucket(
 
 def workbench_payload(params: dict[str, list[str]] | None = None) -> dict:
     params = params or {}
+    lean_response = str((params.get("lean") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}
     region = active_region_code((params.get("region") or [""])[0] or None)
     city = (params.get("city") or [active_region_context(region).get("city") or ""])[0]
     context = active_region_context(region)
@@ -10717,7 +10709,7 @@ def workbench_payload(params: dict[str, list[str]] | None = None) -> dict:
         "city": city,
         "summary": summary_payload,
         "today_actions": workbench_actions(summary_payload, top_recommendations, queue_jobs, followups, scan_payload, stale_applications),
-        "top_recommendations": workbench_job_payloads(top_recommendations),
+        "top_recommendations": [] if lean_response else workbench_job_payloads(top_recommendations),
         "today_new_recommendations": workbench_job_payloads(today_new_recommendations),
         "weekly_unqueued_recommendations": workbench_job_payloads(weekly_unqueued_recommendations),
         "discovery_summary": discovery_summary,

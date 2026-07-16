@@ -2358,7 +2358,7 @@ async function refresh() {
   state.profileOptions = await api(`/api/profile-options?region=${encodeURIComponent(region)}`);
   const regionParam = regionQuery();
   const [workbench, daily, profile, careerFit, scanStatus] = await Promise.all([
-    api(`/api/workbench?${regionParam}`),
+    api(`/api/workbench?${regionParam}&lean=1`),
     api(`/api/daily/status?${regionParam}`),
     api("/api/profile"),
     api("/api/career-fit"),
@@ -2656,7 +2656,7 @@ async function refreshFocusData(message = "推荐已按新画像重排。") {
   document.querySelector(".recommendation-switch-head")?.classList.add("is-updating");
   try {
     const [workbench, scanStatus] = await Promise.all([
-      api(`/api/workbench?${regionParam}`),
+      api(`/api/workbench?${regionParam}&lean=1`),
       api(`/api/scan/status?${regionParam}`),
     ]);
     state.workbench = workbench;
