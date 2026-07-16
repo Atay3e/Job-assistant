@@ -27,23 +27,41 @@ def render_api_key() -> str:
     raise SystemExit("Could not read Render API key from CLI config. Run: render login")
 
 
-def curl_json(url: str, key: str | None = None) -> dict | list:
+def curl_json(url: str, key: str | None = None, timeout: int = 30) -> dict | list:
     command = ["curl", "-fsS", url, "-H", "Accept: application/json"]
     if key:
         command.extend(["-H", f"Authorization: Bearer {key}"])
-    result = subprocess.run(command, text=True, capture_output=True, timeout=30)
+    try:
+        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise SystemExit(
+            f"Timed out after {timeout}s waiting for {url}. The Render free service may be in a cold start or unavailable."
+        ) from exc
     if result.returncode != 0:
-        raise SystemExit(result.stderr.strip() or result.stdout.strip())
-    return json.loads(result.stdout)
+        detail = result.stderr.strip() or result.stdout.strip()
+        if key and "401" in detail:
+            raise SystemExit("Render CLI login has expired. Run `render login`, then retry this check.")
+        raise SystemExit(detail)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Expected JSON from {url}, but received an invalid response.") from exc
+
+
+def safe_public_json(url: str, timeout: int) -> dict | list:
+    try:
+        return curl_json(url, timeout=timeout)
+    except SystemExit as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def main() -> None:
     render_key = render_api_key()
-    health = curl_json(f"{PUBLIC_URL}/api/health")
-    auth = curl_json(f"{PUBLIC_URL}/api/auth/config")
     service = curl_json(f"https://api.render.com/v1/services/{SERVICE_ID}", render_key)
     deploys = curl_json(f"https://api.render.com/v1/services/{SERVICE_ID}/deploys?limit=1", render_key)
     env_vars = curl_json(f"https://api.render.com/v1/services/{SERVICE_ID}/env-vars", render_key)
+    health = safe_public_json(f"{PUBLIC_URL}/api/health", timeout=120)
+    auth = safe_public_json(f"{PUBLIC_URL}/api/auth/config", timeout=30)
     wanted = {
         "JOB_ASSISTANT_REQUIRE_AUTH",
         "SUPABASE_URL",

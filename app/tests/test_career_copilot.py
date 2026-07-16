@@ -238,6 +238,32 @@ class SupabaseSetupScriptTests(unittest.TestCase):
         self.assertEqual(values["SUPABASE_SERVICE_ROLE_KEY"], "sb_secret_test")
         self.assertEqual(values["JOB_ASSISTANT_REQUIRE_AUTH"], "1")
 
+    def test_render_status_reports_expired_cli_login_without_traceback(self):
+        from scripts import check_render_status as status
+
+        completed = subprocess.CompletedProcess(
+            args=["curl"],
+            returncode=22,
+            stdout="",
+            stderr="curl: (22) The requested URL returned error: 401",
+        )
+        with mock.patch.object(status.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(SystemExit, "render login"):
+                status.curl_json("https://api.render.com/v1/services/test", "expired")
+
+    def test_render_status_turns_public_cold_start_timeout_into_diagnostic(self):
+        from scripts import check_render_status as status
+
+        with mock.patch.object(
+            status.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["curl"], 120),
+        ):
+            result = status.safe_public_json("https://example.onrender.com/api/health", timeout=120)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("cold start", result["error"].lower())
+
 
 class SupabaseStorageTests(unittest.TestCase):
     def test_storage_bucket_missing_400_body_is_treated_as_404(self):
