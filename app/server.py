@@ -1323,6 +1323,7 @@ SOURCE_LIMITS = {
     "MyCareersFuture": 18,
     "Prosple": 24,
     "SGInnovate Deep Tech": 24,
+    "Synapxe HealthTech": 24,
     "Careers@Gov": 30,
     "Internship.sg": 24,
     "Cultjobs": 18,
@@ -1469,6 +1470,7 @@ USER_JOB_TAG_OPTIONS = [
     {"value": "source_mycareersfuture", "label": "MyCareersFuture", "category": "来源"},
     {"value": "source_prosple", "label": "Prosple 学生岗位", "category": "来源"},
     {"value": "source_sginnovate", "label": "SGInnovate 深科技", "category": "来源"},
+    {"value": "source_synapxe", "label": "Synapxe HealthTech", "category": "来源"},
     {"value": "source_cultjobs", "label": "Cultjobs 创意岗位", "category": "来源"},
     {"value": "source_startup", "label": "创业与 AI 机会", "category": "来源"},
     {"value": "source_google_jobs", "label": "Google Jobs", "category": "来源"},
@@ -1551,6 +1553,7 @@ SCAN_SOURCE_MODES = {
     "MyCareersFuture": "supplemental",
     "Prosple": "primary",
     "SGInnovate Deep Tech": "primary",
+    "Synapxe HealthTech": "primary",
     "Careers@Gov": "primary",
     "Internship.sg": "supplemental",
     "Cultjobs": "primary",
@@ -7227,6 +7230,154 @@ def fetch_sginnovate_deep_tech_jobs(limit: int, region: str | None = None) -> tu
     return jobs, failures
 
 
+SYNAPXE_CAREERS_BASE_URL = "https://careers-public-healthtech-jobs.synapxe.sg"
+SYNAPXE_SEARCH_QUERIES = ["intern", "HealthTech Associate Programme"]
+
+
+def parse_synapxe_search_links(html: str, limit: int) -> list[dict]:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return []
+    soup = BeautifulSoup(html, "html.parser")
+    links: list[dict] = []
+    seen: set[str] = set()
+    for anchor in soup.select("a.jobTitle-link[href]"):
+        position = clean_text(anchor.get_text(" ", strip=True))
+        path = clean_text(anchor.get("href") or "")
+        if not position or not re.match(r"^/job/.+/\d+/?(?:\?.*)?$", path, flags=re.I):
+            continue
+        url = urljoin(f"{SYNAPXE_CAREERS_BASE_URL}/", path)
+        key = canonical_job_url("Synapxe HealthTech", url)
+        if not key or key in seen or not is_actionable_job_title(position):
+            continue
+        seen.add(key)
+        links.append({"position": position[:180], "url": url})
+        if len(links) >= limit:
+            break
+    return links
+
+
+def parse_synapxe_job_detail(html: str, listing: dict) -> dict | None:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    title_node = soup.select_one("h1")
+    location_node = soup.select_one(".jobGeoLocation")
+    company_node = soup.select_one(".jobCompany span")
+    position = clean_text(title_node.get_text(" ", strip=True) if title_node else listing.get("position") or "")
+    location = clean_text(location_node.get_text(" ", strip=True) if location_node else "")
+    company = clean_text(company_node.get_text(" ", strip=True) if company_node else "Synapxe")
+    description_node = soup.select_one(".jobdescription")
+    description = clean_text(description_node.get_text(" ", strip=True) if description_node else "")
+    date_node = soup.select_one(".jobDate")
+    listing_date = clean_text(date_node.get_text(" ", strip=True).replace("Date:", "", 1) if date_node else "")
+    if (
+        not position
+        or not description
+        or not explicit_ats_location_matches_region(location, "SG", "Singapore")
+        or not is_actionable_company_name(company, position)
+    ):
+        return None
+    title_text = position.lower()
+    if re.search(r"\b(intern|internship)\b", title_text):
+        employment_type = "Internship"
+    elif "healthtech associate programme" in title_text:
+        employment_type = "Graduate"
+    else:
+        return None
+    external_match = re.search(r"/(\d+)/?(?:\?.*)?$", clean_text(listing.get("url") or ""))
+    evidence = [
+        description,
+        "Synapxe official HealthTech careers portal.",
+        f"Official listing date: {listing_date}" if listing_date else "",
+    ]
+    return {
+        "company": company,
+        "position": position[:180],
+        "source": "Synapxe HealthTech",
+        "url": clean_text(listing.get("url") or ""),
+        "external_job_id": external_match.group(1) if external_match else "",
+        "location": "Singapore",
+        "region": "SG",
+        "city": "Singapore",
+        "source_region": "SG",
+        "job_type": employment_type,
+        "employment_type": employment_type,
+        "jd_text": "\n\n".join(value for value in evidence if value)[:12000],
+    }
+
+
+def fetch_synapxe_healthtech_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    if active_region_code(region) != "SG":
+        return [], []
+    listings: list[dict] = []
+    failures: list[str] = []
+    seen_urls: set[str] = set()
+    for query in SYNAPXE_SEARCH_QUERIES:
+        try:
+            html = http_get(
+                f"{SYNAPXE_CAREERS_BASE_URL}/search/?q={quote_plus(query)}",
+                timeout=15,
+                retries=0,
+            )
+        except Exception as exc:
+            failures.append(f"Synapxe {query}: {exc}")
+            continue
+        query_is_internship = query == "intern"
+        query_limit = limit if query_is_internship else min(4, max(1, limit // 5))
+        query_count = 0
+        for listing in parse_synapxe_search_links(html, max(30, limit * 2)):
+            title = listing["position"].lower()
+            if query_is_internship and not re.search(r"\b(intern|internship)\b", title):
+                continue
+            if not query_is_internship and "healthtech associate programme" not in title:
+                continue
+            key = canonical_job_url("Synapxe HealthTech", listing["url"])
+            if key and key not in seen_urls:
+                seen_urls.add(key)
+                listings.append(listing)
+                query_count += 1
+                if query_count >= query_limit:
+                    break
+
+    def fetch_detail(index_listing: tuple[int, dict]) -> tuple[int, dict | None, str | None]:
+        index, listing = index_listing
+        try:
+            html = http_get(listing["url"], timeout=10, retries=0)
+            return index, parse_synapxe_job_detail(html, listing), None
+        except Exception as exc:
+            return index, None, f"{listing['url']}: {exc}"
+
+    parsed: dict[int, dict] = {}
+    detail_failures: list[str] = []
+    with ThreadPoolExecutor(max_workers=min(8, len(listings) or 1)) as executor:
+        futures = [executor.submit(fetch_detail, item) for item in enumerate(listings)]
+        for future in as_completed(futures):
+            index, job, failure = future.result()
+            if job:
+                parsed[index] = job
+            elif failure:
+                detail_failures.append(failure)
+
+    ordered = [parsed[index] for index in sorted(parsed)]
+    internships = [job for job in ordered if job["employment_type"] == "Internship"]
+    graduate = [job for job in ordered if job["employment_type"] == "Graduate"]
+    graduate_slots = min(4, max(1, limit // 5)) if graduate else 0
+    jobs = internships[: max(0, limit - graduate_slots)] + graduate[:graduate_slots]
+    if len(jobs) < limit:
+        selected_urls = {job["url"] for job in jobs}
+        remaining = [job for job in ordered if job["url"] not in selected_urls]
+        jobs.extend(remaining[: limit - len(jobs)])
+    if detail_failures:
+        failures.append(f"Synapxe HealthTech: {len(detail_failures)} detail pages unavailable.")
+    if not jobs and not failures:
+        failures.append("Synapxe HealthTech: no current Singapore internship or associate programme roles.")
+    return jobs[:limit], failures[:3]
+
+
 CAREERS_GOV_QUERIES = [
     "product intern",
     "design intern",
@@ -7741,6 +7892,7 @@ def scan_source_definitions(region: str | None = None) -> list[tuple[str, object
             ("MyCareersFuture", lambda limit: fetch_mycareersfuture_jobs(limit, code), SOURCE_LIMITS["MyCareersFuture"]),
             ("Prosple", lambda limit: fetch_prosple_jobs(limit, code), SOURCE_LIMITS["Prosple"]),
             ("SGInnovate Deep Tech", lambda limit: fetch_sginnovate_deep_tech_jobs(limit, code), SOURCE_LIMITS["SGInnovate Deep Tech"]),
+            ("Synapxe HealthTech", lambda limit: fetch_synapxe_healthtech_jobs(limit, code), SOURCE_LIMITS["Synapxe HealthTech"]),
             ("Careers@Gov", lambda limit: fetch_careers_gov_jobs(limit, code), SOURCE_LIMITS["Careers@Gov"]),
             ("Internship.sg", lambda limit: fetch_internship_sg_jobs(limit, code), SOURCE_LIMITS["Internship.sg"]),
             ("新加坡科技与 AI ATS", lambda limit: fetch_sg_ai_startup_ats_jobs(limit, code), SOURCE_LIMITS["AI Startup ATS"]),
@@ -9895,6 +10047,8 @@ def source_tag_for_job(source: str) -> str:
         return "source_prosple"
     if "sginnovate" in lowered:
         return "source_sginnovate"
+    if "synapxe" in lowered:
+        return "source_synapxe"
     if "google jobs" in lowered:
         return "source_google_jobs"
     return ""
@@ -10115,13 +10269,11 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         adjustment += 0.1
     if entry_level["is_entry_level"] and job.get("employment_type") in {"Graduate", "Full-time"}:
         adjustment += 0.08
-    public_sector_caution = (
-        region == "SG"
-        and "careers@gov" in clean_text(job.get("source") or "").lower()
-        and visa != "possible"
-        and not company_visa_possible
-    )
-    if public_sector_caution:
+    source_text = clean_text(job.get("source") or "").lower()
+    public_sector_caution = region == "SG" and "careers@gov" in source_text and visa != "possible" and not company_visa_possible
+    public_health_caution = region == "SG" and "synapxe" in source_text and visa != "possible" and not company_visa_possible
+    public_pathway_caution = public_sector_caution or public_health_caution
+    if public_pathway_caution:
         adjustment -= 0.32 if context.get("sponsorship_priority") == "high" else 0.18
 
     if conversion in {"strong", "possible"}:
@@ -10153,10 +10305,15 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
     if public_sector_caution:
         tags.append("公共部门 · 工签需重点确认")
         questions.append("投递前确认：该岗位是否接受当前学生身份，以及转正后是否支持工作准证？")
+    elif public_health_caution:
+        tags.append("公共医疗 · 工签需重点确认")
+        questions.append("投递前确认：Synapxe 该项目是否接受当前学生身份，以及转正后是否支持工作准证？")
 
     evidence = list(job.get("pathway_evidence_json") or [])[:5]
     if public_sector_caution:
         evidence.append("来源为 Careers@Gov，岗位未明确提供外籍留用或工作准证支持证据。")
+    elif public_health_caution:
+        evidence.append("来源为 Synapxe 公共 HealthTech 招聘站，岗位未明确提供外籍留用或工作准证支持证据。")
     if company_profile.get("recommend_reason"):
         evidence.append(f"公司理由: {company_profile['recommend_reason']}")
     if entry_level["evidence"]:
@@ -10175,7 +10332,11 @@ def pathway_preference_for_job(job: dict, context: dict, region: str, company_pr
         "company_group": company_group,
         "entry_level_signal": bool(entry_level["is_entry_level"]),
         "entry_level_label": entry_level["label"],
-        "pathway_priority_risk": "public_sector_sponsorship" if public_sector_caution and context.get("sponsorship_priority") == "high" else "",
+        "pathway_priority_risk": (
+            "public_sector_sponsorship" if public_sector_caution and context.get("sponsorship_priority") == "high"
+            else "public_health_sponsorship" if public_health_caution and context.get("sponsorship_priority") == "high"
+            else ""
+        ),
     }
 
 

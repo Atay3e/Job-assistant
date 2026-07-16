@@ -1044,6 +1044,106 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(server.scan_source_mode("SGInnovate Deep Tech"), "primary")
         self.assertEqual(server.source_tag_for_job("SGInnovate Deep Tech"), "source_sginnovate")
 
+    def test_synapxe_search_parser_deduplicates_official_job_links(self):
+        html = """
+        <table class="searchResults"><tbody>
+          <tr class="data-row"><td class="colTitle">
+            <a class="jobTitle-link" href="/job/AI-Strategy-Internship/57582944/">AI Strategy &amp; Innovation Internship</a>
+            <a class="jobTitle-link" href="/job/AI-Strategy-Internship/57582944/">AI Strategy &amp; Innovation Internship</a>
+          </td></tr>
+          <tr><td><a href="/content/about/">About Synapxe</a></td></tr>
+        </tbody></table>
+        """
+
+        links = server.parse_synapxe_search_links(html, 10)
+
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0]["position"], "AI Strategy & Innovation Internship")
+        self.assertEqual(
+            links[0]["url"],
+            "https://careers-public-healthtech-jobs.synapxe.sg/job/AI-Strategy-Internship/57582944/",
+        )
+
+    def test_synapxe_detail_parser_keeps_official_healthtech_internship_content(self):
+        html = """
+        <html><body>
+          <h1>Uni Internship - AI Strategy &amp; Innovation</h1>
+          <p class="jobDate"><strong>Date:</strong> 4 Jul 2026</p>
+          <p class="jobLocation"><strong>Location:</strong><span class="jobGeoLocation">SG</span></p>
+          <p class="jobCompany"><strong>Company:</strong><span>Synapxe</span></p>
+          <div class="jobdescription">
+            <p>Join Synapxe as an intern and improve health through technology.</p>
+            <p>Map user needs and shape an AI innovation roadmap.</p>
+          </div>
+        </body></html>
+        """
+        listing = {
+            "position": "Uni Internship - AI Strategy & Innovation",
+            "url": "https://careers-public-healthtech-jobs.synapxe.sg/job/ai-strategy/57582944/",
+        }
+
+        job = server.parse_synapxe_job_detail(html, listing)
+
+        self.assertIsNotNone(job)
+        self.assertEqual(job["company"], "Synapxe")
+        self.assertEqual(job["source"], "Synapxe HealthTech")
+        self.assertEqual(job["employment_type"], "Internship")
+        self.assertIn("AI innovation roadmap", job["jd_text"])
+        self.assertIn("Official listing date: 4 Jul 2026", job["jd_text"])
+
+    def test_synapxe_source_is_primary_and_registered_for_singapore(self):
+        self.assertIn("Synapxe HealthTech", server.expected_scan_sources("SG"))
+        self.assertEqual(server.scan_source_mode("Synapxe HealthTech"), "primary")
+        self.assertEqual(server.source_tag_for_job("Synapxe HealthTech"), "source_synapxe")
+
+    def test_synapxe_fetcher_handles_sparse_official_results(self):
+        search_html = """
+        <a class="jobTitle-link" href="/job/Product-Intern/57582944/">Product Intern</a>
+        """
+        detail_html = """
+        <h1>Product Intern</h1>
+        <p class="jobLocation"><span class="jobGeoLocation">SG</span></p>
+        <p class="jobCompany"><span>Synapxe</span></p>
+        <div class="jobdescription">Research user needs for a public HealthTech product.</div>
+        """
+
+        def fake_get(url, **_kwargs):
+            return detail_html if "/job/" in url else search_html
+
+        with mock.patch.object(server, "http_get", side_effect=fake_get):
+            jobs, failures = server.fetch_synapxe_healthtech_jobs(3, "SG")
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["position"], "Product Intern")
+        self.assertEqual(failures, [])
+
+    def test_synapxe_fetcher_only_opens_details_matching_each_early_career_query(self):
+        search_html = """
+        <a class="jobTitle-link" href="/job/Product-Intern/1/">Product Intern</a>
+        <a class="jobTitle-link" href="/job/Systems-Engineer-HAP/2/">Systems Engineer (HealthTech Associate Programme)</a>
+        <a class="jobTitle-link" href="/job/Senior-Engineer/3/">Senior Engineer</a>
+        """
+        detail_urls = []
+
+        def fake_get(url, **_kwargs):
+            if "/job/" not in url:
+                return search_html
+            detail_urls.append(url)
+            title = "Product Intern" if url.endswith("/1/") else "Systems Engineer (HealthTech Associate Programme)"
+            return f"""
+            <h1>{title}</h1>
+            <p class="jobLocation"><span class="jobGeoLocation">SG</span></p>
+            <p class="jobCompany"><span>Synapxe</span></p>
+            <div class="jobdescription">Public HealthTech early-career role.</div>
+            """
+
+        with mock.patch.object(server, "http_get", side_effect=fake_get):
+            jobs, _failures = server.fetch_synapxe_healthtech_jobs(4, "SG")
+
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(len(detail_urls), 2)
+        self.assertFalse(any("Senior-Engineer" in url for url in detail_urls))
+
     def test_careers_gov_detail_parser_keeps_requirements_and_closing_date(self):
         html = """
         <html><body>
@@ -3103,11 +3203,15 @@ class RecommendationTests(TempAppMixin, unittest.TestCase):
 
         private = server.pathway_preference_for_job({**common, "source": "InternSG"}, context, "SG", {})
         public = server.pathway_preference_for_job({**common, "source": "Careers@Gov"}, context, "SG", {})
+        public_health = server.pathway_preference_for_job({**common, "source": "Synapxe HealthTech"}, context, "SG", {})
 
         self.assertLessEqual(public["pathway_adjustment"], private["pathway_adjustment"] - 0.25)
         self.assertIn("公共部门 · 工签需重点确认", public["pathway_tags"])
         self.assertTrue(any("身份" in item for item in public["pathway_questions"]))
         self.assertTrue(any("Careers@Gov" in item for item in public["evidence"]))
+        self.assertLessEqual(public_health["pathway_adjustment"], private["pathway_adjustment"] - 0.25)
+        self.assertIn("公共医疗 · 工签需重点确认", public_health["pathway_tags"])
+        self.assertTrue(any("Synapxe" in item for item in public_health["evidence"]))
 
     def test_explicit_sponsorship_signal_avoids_public_sector_caution(self):
         result = server.pathway_preference_for_job(
