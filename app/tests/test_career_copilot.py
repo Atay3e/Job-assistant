@@ -1878,6 +1878,33 @@ class ParserTests(unittest.TestCase):
             server.hard_flag_patterns("A minimum of 3+ years of product experience is required."),
         )
 
+    def test_company_history_does_not_count_as_candidate_experience(self):
+        company_history = [
+            "For more than 75 years, TE Connectivity has partnered with customers worldwide.",
+            "Our team brings together over 30 years of combined experience in events and marketing.",
+            "HMI is a regional healthcare group with more than 25 years of experience in Southeast Asia.",
+            "We are a naval systems integrator with over 400 years of experience in shipbuilding.",
+            "Leveraging over 50 years of experience, the group develops conservation ventures.",
+            "Our brands have enjoyed unprecedented growth in the past 5 years.",
+            "Over the past 20 years, we have adapted to meet community needs.",
+            "The private credit market has expanded significantly over the last 7 years.",
+            "You will work with senior leaders. The market has expanded over the last 7 years.",
+            "Applicants must be 21 years old and above under local regulations.",
+        ]
+
+        for text in company_history:
+            with self.subTest(text=text):
+                self.assertNotIn("experience_too_high", server.hard_flag_patterns(text))
+
+        candidate_requirements = [
+            "Candidates need at least 3 years of relevant product experience.",
+            "You bring 5+ years of UX design experience.",
+            "A minimum of 3-6 years is required.",
+        ]
+        for text in candidate_requirements:
+            with self.subTest(text=text):
+                self.assertIn("experience_too_high", server.hard_flag_patterns(text))
+
     def test_entry_level_signal_is_visible_in_pathway_tags_and_reason(self):
         job = {
             "company": "Deep Tech Example",
@@ -3186,6 +3213,26 @@ class WorkbenchPayloadTests(TempAppMixin, unittest.TestCase):
 
 
 class RecommendationTests(TempAppMixin, unittest.TestCase):
+    def test_legacy_company_history_experience_flag_is_repaired(self):
+        job = server.upsert_job(
+            {
+                "company": "Longstanding Health Group",
+                "position": "Marketing Intern",
+                "source": "InternSG",
+                "url": "https://example.com/history-intern",
+                "jd_text": "Our healthcare group has more than 25 years of experience in Southeast Asia.",
+            }
+        )
+        with server.get_db() as conn:
+            conn.execute(
+                "update jobs set eligibility_flags=? where id=?",
+                (json.dumps(["experience_too_high", "visa_unclear"]), job["id"]),
+            )
+            repaired = server.repair_legacy_experience_flags(conn)
+
+        self.assertEqual(repaired, 1)
+        self.assertEqual(server.get_job(job["id"])["eligibility_flags"], ["visa_unclear"])
+
     def test_public_sector_roles_are_cautioned_when_sponsorship_is_high_priority(self):
         context = {
             "career_goal": "sg_internship_to_fulltime",

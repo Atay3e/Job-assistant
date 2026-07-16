@@ -2666,6 +2666,7 @@ def setup_db() -> None:
                 migrate_watch_companies_table(conn)
                 seed_default_watch_companies(conn)
                 backfill_job_metadata(conn)
+                repair_legacy_experience_flags(conn)
                 backfill_application_deadlines(conn)
         INITIALIZED_DB_PATHS.add(str(db_path))
 
@@ -4170,7 +4171,36 @@ def has_high_experience_requirement(text: str) -> bool:
     if ENTRY_LEVEL_CUE_PATTERN.search(lowered):
         lowered = re.sub(r"\b0\s*(?:-|to)\s*3\s*(?:years?|yrs?)\b", " entry range ", lowered)
         lowered = re.sub(r"\b(?:up to|less than)\s+3\s*(?:years?|yrs?)\b", " entry range ", lowered)
-    return bool(re.search(r"\b([3-9]|\d{2,})\+?\s*(years?|yrs?)\b", lowered))
+    years_pattern = re.compile(
+        r"\b(?:[3-9]|\d{2,})(?:\s*\+|\s*(?:-|to)\s*(?:[3-9]|\d{2,}))?\s*(?:years?|yrs?)\b",
+        re.I,
+    )
+    requirement_pattern = re.compile(
+        r"\b(?:candidate|applicant|you|your|qualification|requirement|minimum|at\s+least|"
+        r"must\s+have|required|preferred|looking\s+for|we\s+seek|you\s+bring)\b",
+        re.I,
+    )
+    company_history_pattern = re.compile(
+        r"\b(?:(?:for|with|leveraging)\s+(?:more\s+than\s+|over\s+)?|(?:past|last)\s+|consecutive\s+|"
+        r"founded\s+|established\s+|operating\s+for\s+|company\s+has\s+|"
+        r"group\s+(?:has|with)\s+|team\b.{0,80}"
+        r"(?:combined|collective)|brands?\b.{0,30}(?:growth|history))",
+        re.I,
+    )
+    for match in years_pattern.finditer(lowered):
+        local_context = lowered[max(0, match.start() - 100): min(len(lowered), match.end() + 120)]
+        history_prefix = lowered[max(0, match.start() - 36): match.start()]
+        if re.search(r"\b(?:past|last|consecutive)\s+$", history_prefix):
+            continue
+        if re.search(r"\b(?:years?|yrs?)\s+old\b|\byears?\s+of\s+age\b", local_context):
+            continue
+        local_requirement = requirement_pattern.search(local_context)
+        if company_history_pattern.search(local_context) and not local_requirement:
+            continue
+        experience_after = lowered[match.end(): min(len(lowered), match.end() + 72)]
+        if local_requirement or re.search(r"(?:of\s+)?[^.;\n]{0,42}\bexperience\b", experience_after):
+            return True
+    return False
 
 
 def entry_level_profile_for_job(job: dict) -> dict:
@@ -4208,6 +4238,28 @@ def hard_flag_patterns(text: str) -> list[str]:
     if re.search(r"\b(captcha|login required|answer the following questions)\b", lowered):
         flags.append("custom_questions")
     return sorted(set(flags))
+
+
+def repair_legacy_experience_flags(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        select id, company, position, source, job_type, jd_text, eligibility_flags
+        from jobs
+        where eligibility_flags like '%experience_too_high%'
+        """
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        combined = "\n".join(clean_text(row[key] or "") for key in ["company", "position", "source", "job_type", "jd_text"])
+        if has_high_experience_requirement(combined):
+            continue
+        flags = [flag for flag in json_list(row["eligibility_flags"]) if flag != "experience_too_high"]
+        conn.execute(
+            "update jobs set eligibility_flags=?, updated_at=? where id=?",
+            (json.dumps(flags, ensure_ascii=False), now_iso(), row["id"]),
+        )
+        repaired += 1
+    return repaired
 
 
 def detect_employment_type(position: str, jd_text: str = "", job_type: str = "") -> str:
