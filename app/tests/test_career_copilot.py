@@ -5176,6 +5176,28 @@ class AsyncScanTests(TempAppMixin, unittest.TestCase):
 
 
 class FrontendUxContractTests(unittest.TestCase):
+    def test_supplemental_jobs_offer_compact_search_and_quick_filters(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+        index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="supplementalJobSearch"', index_html)
+        self.assertIn('data-supplemental-filter="official"', index_html)
+        self.assertIn('data-supplemental-filter="conversion"', index_html)
+        self.assertIn('data-supplemental-filter="visa"', index_html)
+        self.assertIn('id="supplementalFilterSummary"', index_html)
+        self.assertIn("function filterSupplementalJobs(jobs)", app_js)
+        self.assertIn("state.supplementalJobQuery", app_js)
+        self.assertIn("state.supplementalJobFilter", app_js)
+
+    def test_supplemental_filter_keeps_watched_company_exclusion_first(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn(
+            ".filter((job) => isSupplementalRecommendationCandidate(job, shortlistIds))\n"
+            "    .filter((job) => filterSupplementalJobs([job]).length)",
+            app_js,
+        )
+
     def test_scan_quality_copy_distinguishes_updates_from_unchanged_checks(self):
         app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
 

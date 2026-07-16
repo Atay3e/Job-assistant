@@ -10,7 +10,7 @@
       }
     </script>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/styles.css?v=20260716-entry-level" />
+    <link rel="stylesheet" href="/styles.css?v=20260716-job-discovery" />
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
   <body>
@@ -547,6 +547,21 @@
                 </button>
               </div>
             </div>
+            <div class="supplemental-discovery-toolbar" aria-label="补充候选筛选">
+              <label class="supplemental-search-label" for="supplementalJobSearch">
+                <span class="sr-only">搜索补充候选</span>
+                <input id="supplementalJobSearch" type="search" placeholder="搜索公司、岗位或来源" autocomplete="off" />
+              </label>
+              <div class="supplemental-quick-filters" role="group" aria-label="快速筛选">
+                <button class="supplemental-filter active" type="button" data-supplemental-filter="all" aria-pressed="true">全部</button>
+                <button class="supplemental-filter" type="button" data-supplemental-filter="early_career" aria-pressed="false">实习/应届</button>
+                <button class="supplemental-filter" type="button" data-supplemental-filter="official" aria-pressed="false">官网/ATS</button>
+                <button class="supplemental-filter" type="button" data-supplemental-filter="conversion" aria-pressed="false">可转正</button>
+                <button class="supplemental-filter" type="button" data-supplemental-filter="visa" aria-pressed="false">工签可能</button>
+                <button class="supplemental-filter" type="button" data-supplemental-filter="chinese" aria-pressed="false">中文友好</button>
+              </div>
+              <span id="supplementalFilterSummary" class="supplemental-filter-summary" role="status" aria-live="polite"></span>
+            </div>
             <div id="fitJobList" class="inbox-list supplemental-inbox"></div>
             <div id="aiJobList" class="inbox-list supplemental-inbox ai-job-list" hidden></div>
             <div id="jobList" class="inbox-list supplemental-inbox" hidden></div>
@@ -943,6 +958,6 @@
       </div>
     </dialog>
 
-    <script src="/app.js?v=20260716-entry-level"></script>
+    <script src="/app.js?v=20260716-job-discovery"></script>
   </body>
 </html>

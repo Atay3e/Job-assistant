@@ -40,6 +40,8 @@ const state = {
   todayRecommendationBucket: "today_new",
   todayRecommendationVisibleCount: 8,
   supplementalRecommendationVisibleCount: 8,
+  supplementalJobQuery: "",
+  supplementalJobFilter: "all",
   jobsPanel: "recommendations",
   expandedJobId: null,
   compactMode: true,
@@ -1688,6 +1690,54 @@ function renderRecommendationContext() {
   document.getElementById("recommendationContext").textContent = `${text}${freshnessNote}`;
 }
 
+function supplementalJobSearchText(job) {
+  const alternateSources = (job.alternate_links || []).map((link) => link?.source || "");
+  const tags = [...(job.user_tag_matches || []), ...(job.pathway_tags || [])]
+    .map((tag) => typeof tag === "string" ? tag : tag?.label || tag?.id || "");
+  return [
+    job.company,
+    job.position,
+    job.source,
+    job.employment_type,
+    job.recommendation_reason,
+    ...alternateSources,
+    ...(job.alternate_sources || []),
+    ...tags,
+  ].join(" ").normalize("NFKC").toLocaleLowerCase();
+}
+
+function supplementalJobTagIds(job) {
+  return new Set((job.user_tag_matches || []).map((tag) => String(tag?.id || tag || "")));
+}
+
+function filterSupplementalJobs(jobs) {
+  const query = String(state.supplementalJobQuery || "").trim().normalize("NFKC").toLocaleLowerCase();
+  const activeFilter = state.supplementalJobFilter || "all";
+  return (jobs || []).filter((job) => {
+    if (query && !supplementalJobSearchText(job).includes(query)) return false;
+    if (activeFilter === "all") return true;
+    const tagIds = supplementalJobTagIds(job);
+    const employmentType = String(job.employment_type || "").toLocaleLowerCase();
+    const source = String(job.source || "").toLocaleLowerCase();
+    if (activeFilter === "early_career") {
+      return ["internship", "graduate"].includes(employmentType)
+        || tagIds.has("internship")
+        || tagIds.has("graduate")
+        || tagIds.has("entry_level");
+    }
+    if (activeFilter === "official") {
+      return tagIds.has("source_official")
+        || /ats|company site|官网|careers@gov|synapxe|sginnovate/.test(source);
+    }
+    if (activeFilter === "conversion") {
+      return tagIds.has("conversion_strong") || tagIds.has("conversion_possible");
+    }
+    if (activeFilter === "visa") return tagIds.has("visa_possible");
+    if (activeFilter === "chinese") return tagIds.has("chinese_friendly");
+    return true;
+  });
+}
+
 function renderJobs() {
   const panelHints = {
     recommendations: "这里补充今日推荐之外的机会；不会重复今日推荐、投递队列或关注公司岗位。",
@@ -1712,10 +1762,17 @@ function renderJobs() {
   }
 
   const shortlistIds = workbenchShortlistJobIds();
-  const fitJobs = collapseSupplementalJobs((state.recommendations.jobs || []).filter((job) => isSupplementalRecommendationCandidate(job, shortlistIds))).slice(0, SUPPLEMENTAL_RECOMMENDATION_POOL_SIZE);
-  const aiJobs = collapseSupplementalJobs(state.aiJobs.filter((job) => isSupplementalRecommendationCandidate(job, shortlistIds))).slice(0, 20);
+  const fitJobs = collapseSupplementalJobs((state.recommendations.jobs || [])
+    .filter((job) => isSupplementalRecommendationCandidate(job, shortlistIds))
+    .filter((job) => filterSupplementalJobs([job]).length))
+    .slice(0, SUPPLEMENTAL_RECOMMENDATION_POOL_SIZE);
+  const aiJobs = collapseSupplementalJobs(state.aiJobs
+    .filter((job) => isSupplementalRecommendationCandidate(job, shortlistIds))
+    .filter((job) => filterSupplementalJobs([job]).length))
+    .slice(0, 20);
   const visible = state.jobs
     .filter((job) => isSupplementalRecommendationCandidate(job, shortlistIds))
+    .filter((job) => filterSupplementalJobs([job]).length)
     .filter((job) => !state.activeFilter || job.status === state.activeFilter);
   const generalJobs = collapseSupplementalJobs([...visible]
     .sort((a, b) =>
@@ -1739,6 +1796,18 @@ function renderJobs() {
   document.getElementById("fitJobCount").textContent = fitJobs.length;
   document.getElementById("aiJobCount").textContent = aiJobs.length;
   document.getElementById("generalJobCount").textContent = generalJobs.length;
+  document.querySelectorAll("[data-supplemental-filter]").forEach((button) => {
+    const active = button.dataset.supplementalFilter === state.supplementalJobFilter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const filterSummary = document.getElementById("supplementalFilterSummary");
+  const hasDiscoveryFilter = Boolean(state.supplementalJobQuery.trim()) || state.supplementalJobFilter !== "all";
+  if (filterSummary) {
+    filterSummary.textContent = hasDiscoveryFilter
+      ? `找到 ${activeRecommendationJobs.length} 个`
+      : `${activeRecommendationJobs.length} 个候选`;
+  }
   renderRecommendationContext();
 
   const fitList = document.getElementById("fitJobList");
@@ -1750,9 +1819,10 @@ function renderJobs() {
   fitList.hidden = state.recommendationView !== "fit";
   aiList.hidden = state.recommendationView !== "ai";
   generalList.hidden = state.recommendationView !== "general";
-  fitList.innerHTML = fitJobs.length ? fitJobs.slice(0, visibleRecommendationCount).map((job) => compactJobRow(job)).join("") : emptyState("今日推荐已覆盖主要候选；这里暂时没有额外推荐。");
-  aiList.innerHTML = aiJobs.length ? aiJobs.slice(0, visibleRecommendationCount).map((job) => compactJobRow(job)).join("") : emptyState("今日推荐之外暂时没有新的 AI、Product 或 UX 候选。");
-  generalList.innerHTML = generalJobs.length ? generalJobs.slice(0, visibleRecommendationCount).map((job) => compactJobRow(job)).join("") : emptyState("今日推荐之外暂时没有其它高分补充岗位。");
+  const discoveryEmptyText = hasDiscoveryFilter ? "没有符合当前搜索和筛选的岗位。" : "";
+  fitList.innerHTML = fitJobs.length ? fitJobs.slice(0, visibleRecommendationCount).map((job) => compactJobRow(job)).join("") : emptyState(discoveryEmptyText || "今日推荐已覆盖主要候选；这里暂时没有额外推荐。");
+  aiList.innerHTML = aiJobs.length ? aiJobs.slice(0, visibleRecommendationCount).map((job) => compactJobRow(job)).join("") : emptyState(discoveryEmptyText || "今日推荐之外暂时没有新的 AI、Product 或 UX 候选。");
+  generalList.innerHTML = generalJobs.length ? generalJobs.slice(0, visibleRecommendationCount).map((job) => compactJobRow(job)).join("") : emptyState(discoveryEmptyText || "今日推荐之外暂时没有其它高分补充岗位。");
   const visibleSupplementalCount = Math.min(visibleRecommendationCount, activeRecommendationJobs.length);
   const remainingSupplementalCount = Math.max(0, activeRecommendationJobs.length - visibleSupplementalCount);
   if (supplementalFooter) supplementalFooter.hidden = !activeRecommendationJobs.length;
@@ -3477,6 +3547,18 @@ function bindEvents() {
   document.querySelectorAll("[data-recommendation-view]").forEach((button) => {
     button.addEventListener("click", () => {
       state.recommendationView = button.dataset.recommendationView;
+      state.supplementalRecommendationVisibleCount = SUPPLEMENTAL_RECOMMENDATION_PAGE_SIZE;
+      renderJobs();
+    });
+  });
+  document.getElementById("supplementalJobSearch")?.addEventListener("input", (event) => {
+    state.supplementalJobQuery = event.target.value;
+    state.supplementalRecommendationVisibleCount = SUPPLEMENTAL_RECOMMENDATION_PAGE_SIZE;
+    renderJobs();
+  });
+  document.querySelectorAll("[data-supplemental-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.supplementalJobFilter = button.dataset.supplementalFilter || "all";
       state.supplementalRecommendationVisibleCount = SUPPLEMENTAL_RECOMMENDATION_PAGE_SIZE;
       renderJobs();
     });
