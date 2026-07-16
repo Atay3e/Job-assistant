@@ -1005,6 +1005,45 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(server.scan_source_mode("Prosple"), "primary")
         self.assertEqual(server.source_tag_for_job("Prosple"), "source_prosple")
 
+    def test_sginnovate_parser_keeps_only_credible_entry_level_roles(self):
+        base = {
+            "id": "opening-1",
+            "status": "APPROVED",
+            "isPublished": True,
+            "title": "AI/ML Engineer",
+            "experienceType": "FULL_TIME",
+            "experienceLevel": "ENTRY_LEVEL",
+            "workExperienceYears": "NO_EXPERIENCE",
+            "profession": "AI_ENGINEER",
+            "background": "An early-career applied AI role in a Singapore deep-tech startup.",
+            "jobScope": "<p>Build data pipelines and evaluate machine-learning models.</p>",
+            "skills": [{"name": "Machine Learning"}, {"name": "Python"}],
+            "organisation": {"name": "Tacniq Pte Ltd", "websiteUrl": "https://www.tacniq.ai/"},
+        }
+
+        job = server.parse_sginnovate_opening_detail(base)
+        experienced = server.parse_sginnovate_opening_detail(
+            {**base, "id": "opening-2", "workExperienceYears": "THREE_FIVE_YEARS"}
+        )
+        misleading = server.parse_sginnovate_opening_detail(
+            {**base, "id": "opening-3", "title": "Senior AI/ML Engineer", "workExperienceYears": "ONE_TWO_YEARS"}
+        )
+
+        self.assertIsNotNone(job)
+        self.assertEqual(job["source"], "SGInnovate Deep Tech")
+        self.assertEqual(job["company"], "Tacniq Pte Ltd")
+        self.assertEqual(job["employment_type"], "Full-time")
+        self.assertIn("Entry-level", job["job_type"])
+        self.assertIn("No prior experience", job["jd_text"])
+        self.assertIn("Machine Learning", job["jd_text"])
+        self.assertIsNone(experienced)
+        self.assertIsNone(misleading)
+
+    def test_sginnovate_source_is_primary_and_registered_for_singapore(self):
+        self.assertIn("SGInnovate Deep Tech", server.expected_scan_sources("SG"))
+        self.assertEqual(server.scan_source_mode("SGInnovate Deep Tech"), "primary")
+        self.assertEqual(server.source_tag_for_job("SGInnovate Deep Tech"), "source_sginnovate")
+
     def test_careers_gov_detail_parser_keeps_requirements_and_closing_date(self):
         html = """
         <html><body>

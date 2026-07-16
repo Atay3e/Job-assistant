@@ -1322,6 +1322,7 @@ SOURCE_LIMITS = {
     "Google Jobs": 24,
     "MyCareersFuture": 18,
     "Prosple": 24,
+    "SGInnovate Deep Tech": 24,
     "Careers@Gov": 30,
     "Internship.sg": 24,
     "Cultjobs": 18,
@@ -1466,6 +1467,7 @@ USER_JOB_TAG_OPTIONS = [
     {"value": "source_indeed", "label": "Indeed", "category": "来源"},
     {"value": "source_mycareersfuture", "label": "MyCareersFuture", "category": "来源"},
     {"value": "source_prosple", "label": "Prosple 学生岗位", "category": "来源"},
+    {"value": "source_sginnovate", "label": "SGInnovate 深科技", "category": "来源"},
     {"value": "source_cultjobs", "label": "Cultjobs 创意岗位", "category": "来源"},
     {"value": "source_startup", "label": "创业与 AI 机会", "category": "来源"},
     {"value": "source_google_jobs", "label": "Google Jobs", "category": "来源"},
@@ -1547,6 +1549,7 @@ SCAN_SOURCE_MODES = {
     "InternSG（含 AI 关键词）": "primary",
     "MyCareersFuture": "supplemental",
     "Prosple": "primary",
+    "SGInnovate Deep Tech": "primary",
     "Careers@Gov": "primary",
     "Internship.sg": "supplemental",
     "Cultjobs": "primary",
@@ -7051,6 +7054,148 @@ def fetch_prosple_jobs(limit: int, region: str | None = None) -> tuple[list[dict
     return jobs, []
 
 
+SGINNOVATE_MARKETPLACE_URL = "https://central.sginnovate.com/hub/marketplace/openings"
+SGINNOVATE_OPENINGS_API = "https://central.sginnovate.com/api/v1/personahub/marketplace/openings"
+SGINNOVATE_ENTRY_EXPERIENCE = {
+    "NO_EXPERIENCE": "No prior experience",
+    "ONE_TWO_YEARS": "1-2 years",
+}
+
+
+def parse_sginnovate_opening_detail(payload: dict) -> dict | None:
+    title = clean_text(payload.get("title") or "")
+    company_data = payload.get("organisation") or {}
+    company = clean_text(company_data.get("name") or "")
+    experience_level = clean_text(payload.get("experienceLevel") or "").upper()
+    experience_years = clean_text(payload.get("workExperienceYears") or "").upper()
+    experience_type = clean_text(payload.get("experienceType") or "").upper()
+    if (
+        clean_text(payload.get("status") or "").upper() != "APPROVED"
+        or payload.get("isPublished") is False
+        or experience_level != "ENTRY_LEVEL"
+        or experience_years not in SGINNOVATE_ENTRY_EXPERIENCE
+        or not is_actionable_job_title(title)
+        or not is_actionable_company_name(company, title)
+    ):
+        return None
+    if re.search(r"\b(senior|sr\.?|lead|manager|director|head|principal|chief)\b", title, re.I):
+        return None
+
+    opening_id = clean_text(payload.get("id") or "")
+    if not opening_id:
+        return None
+    employment_type = {
+        "FULL_TIME": "Full-time",
+        "PART_TIME": "Contract",
+        "CONTRACT": "Contract",
+    }.get(experience_type, "Unknown")
+    if employment_type == "Unknown":
+        return None
+
+    scope_html = str(payload.get("jobScope") or "")
+    try:
+        from bs4 import BeautifulSoup
+
+        scope = clean_text(BeautifulSoup(scope_html, "html.parser").get_text(" ", strip=True))
+    except ImportError:  # pragma: no cover - requirements include BeautifulSoup.
+        scope = clean_text(re.sub(r"<[^>]+>", " ", unescape(scope_html)))
+    skills = [
+        clean_text(item.get("name") or "")
+        for item in payload.get("skills") or []
+        if isinstance(item, dict) and clean_text(item.get("name") or "")
+    ]
+    experience_label = SGINNOVATE_ENTRY_EXPERIENCE[experience_years]
+    profession = clean_text(payload.get("profession") or "").replace("_", " ").title()
+    website = clean_text(company_data.get("websiteUrl") or "")
+    evidence = [
+        clean_text(payload.get("background") or ""),
+        scope,
+        "SGInnovate Deep Tech Central official marketplace.",
+        f"Entry-level requirement: {experience_label}.",
+        f"Profession: {profession}." if profession else "",
+        f"Skills: {', '.join(skills[:20])}." if skills else "",
+        f"Company website: {website}" if website else "",
+    ]
+    return {
+        "company": company,
+        "position": title[:180],
+        "source": "SGInnovate Deep Tech",
+        "url": f"{SGINNOVATE_MARKETPLACE_URL}/{opening_id}?filter=ALL",
+        "external_job_id": opening_id,
+        "location": "Singapore",
+        "region": "SG",
+        "city": "Singapore",
+        "source_region": "SG",
+        "job_type": f"{employment_type} · Entry-level · {experience_label}",
+        "employment_type": employment_type,
+        "jd_text": "\n\n".join(value for value in evidence if value)[:12000],
+    }
+
+
+def fetch_sginnovate_deep_tech_jobs(limit: int, region: str | None = None) -> tuple[list[dict], list[str]]:
+    if active_region_code(region) != "SG":
+        return [], []
+    try:
+        payload = http_post_json(
+            SGINNOVATE_OPENINGS_API,
+            {
+                "page": 1,
+                "resultsPerPage": 200,
+                "filters": {"isListedOnDtc": True},
+                "viewAsBasicUser": True,
+            },
+            timeout=15,
+        )
+    except Exception as exc:
+        return [], [f"SGInnovate Deep Tech listings: {exc}"]
+
+    listings = []
+    for item in payload.get("openings") or []:
+        title = clean_text(item.get("title") or "")
+        if clean_text(item.get("experienceLevel") or "").upper() != "ENTRY_LEVEL":
+            continue
+        if re.search(r"\b(senior|sr\.?|lead|manager|director|head|principal|chief)\b", title, re.I):
+            continue
+        if clean_text(item.get("id") or "") and is_actionable_job_title(title):
+            listings.append(item)
+
+    def fetch_detail(index_item: tuple[int, dict]) -> tuple[int, dict | None, str | None]:
+        index, listing = index_item
+        opening_id = clean_text(listing.get("id") or "")
+        try:
+            detail = json.loads(http_get(
+                f"https://central.sginnovate.com/api/v1/personahub/marketplace/opening/{opening_id}",
+                timeout=10,
+                retries=0,
+            ))
+            return index, parse_sginnovate_opening_detail(detail), None
+        except Exception as exc:
+            return index, None, f"{opening_id}: {exc}"
+
+    results: dict[int, dict] = {}
+    detail_failures: list[str] = []
+    if listings:
+        with ThreadPoolExecutor(max_workers=min(8, len(listings))) as executor:
+            futures = [executor.submit(fetch_detail, item) for item in enumerate(listings)]
+            for future in as_completed(futures):
+                index, job, failure = future.result()
+                if job:
+                    results[index] = job
+                if failure:
+                    detail_failures.append(failure)
+
+    jobs = [results[index] for index in sorted(results)][:limit]
+    if not jobs:
+        note = "SGInnovate Deep Tech: no open, credible 0-2 year entry-level roles."
+        if detail_failures:
+            note = f"SGInnovate Deep Tech details unavailable ({len(detail_failures)} requests failed)."
+        return [], [note]
+    failures = []
+    if detail_failures:
+        failures.append(f"SGInnovate Deep Tech: {len(detail_failures)} detail pages unavailable.")
+    return jobs, failures
+
+
 CAREERS_GOV_QUERIES = [
     "product intern",
     "design intern",
@@ -7564,6 +7709,7 @@ def scan_source_definitions(region: str | None = None) -> list[tuple[str, object
             ("Cultjobs", lambda limit: fetch_cultjobs_jobs(limit, code), SOURCE_LIMITS["Cultjobs"]),
             ("MyCareersFuture", lambda limit: fetch_mycareersfuture_jobs(limit, code), SOURCE_LIMITS["MyCareersFuture"]),
             ("Prosple", lambda limit: fetch_prosple_jobs(limit, code), SOURCE_LIMITS["Prosple"]),
+            ("SGInnovate Deep Tech", lambda limit: fetch_sginnovate_deep_tech_jobs(limit, code), SOURCE_LIMITS["SGInnovate Deep Tech"]),
             ("Careers@Gov", lambda limit: fetch_careers_gov_jobs(limit, code), SOURCE_LIMITS["Careers@Gov"]),
             ("Internship.sg", lambda limit: fetch_internship_sg_jobs(limit, code), SOURCE_LIMITS["Internship.sg"]),
             ("新加坡科技与 AI ATS", lambda limit: fetch_sg_ai_startup_ats_jobs(limit, code), SOURCE_LIMITS["AI Startup ATS"]),
@@ -9713,6 +9859,8 @@ def source_tag_for_job(source: str) -> str:
         return "source_mycareersfuture"
     if "prosple" in lowered:
         return "source_prosple"
+    if "sginnovate" in lowered:
+        return "source_sginnovate"
     if "google jobs" in lowered:
         return "source_google_jobs"
     return ""
